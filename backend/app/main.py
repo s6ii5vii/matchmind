@@ -1,5 +1,7 @@
 """MatchMind MVP REST API. Start: uvicorn app.main:app --reload --port 8000"""
 
+import asyncio
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,6 +11,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .agents import model_client, run_analysis
@@ -71,6 +74,36 @@ async def analyze(body: AnalyzeRequest):
     client, provider = model_client()
     result = await run_analysis(body.minute, body.mode, body.focus, body.question, client=client, provider=provider)
     return {"synthetic": True, **result}
+
+
+@app.post("/api/analyze/stream")
+async def analyze_stream(body: AnalyzeRequest):
+    """Same as /api/analyze, but streams each agent step as it happens (newline-delimited JSON),
+    ending with {"type": "result", "result": {...}}."""
+    queue: asyncio.Queue = asyncio.Queue()
+    client, provider = model_client()
+
+    async def produce() -> None:
+        try:
+            result = await run_analysis(body.minute, body.mode, body.focus, body.question,
+                                        client=client, provider=provider, listener=queue.put_nowait)
+            queue.put_nowait({"type": "result", "result": {"synthetic": True, **result}})
+        except Exception:
+            queue.put_nowait({"type": "error", "detail": "The agents couldn't finish this one. Try again."})
+
+    async def lines():
+        task = asyncio.create_task(produce())
+        try:
+            while True:
+                item = await queue.get()
+                yield json.dumps(item) + "\n"
+                if item["type"] in ("result", "error"):
+                    break
+        finally:
+            task.cancel()
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/players")

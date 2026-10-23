@@ -10,7 +10,7 @@ from typing_extensions import Never
 
 from ..synthetic import TEAMS
 from . import llm, offline
-from .models import Job
+from .models import Job, Relay
 from .tools import verify_claim, window_events, window_stats
 
 MAX_REVISIONS = 1
@@ -20,6 +20,7 @@ MIN_WINDOW_EVENTS = 4
 class Orchestrator(Executor):
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
+        job.working("Orchestrator", "Reading your question")
         offline.plan(job)
         start, end = job.window
         focus = TEAMS[job.focus]["name"]
@@ -33,6 +34,7 @@ class Orchestrator(Executor):
 class Stats(Executor):
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
+        job.working("Stats", "Counting every event in the spell")
         start, end = job.window
         job.stats = {side: window_stats(side, start, end) for side in TEAMS}
         h, a = job.stats["home"], job.stats["away"]
@@ -56,6 +58,7 @@ class Pundit(Executor):
 
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
+        job.working("Pundit", "Rethinking the busted takes" if job.needs_revision else "Watching the last few minutes")
         start, end = job.window
         if not job.needs_revision and len(window_events(start, end)) < MIN_WINDOW_EVENTS:
             job.log("Pundit", "Held back", "Too little has happened in this spell to have a take.", "warn")
@@ -91,6 +94,7 @@ class Pundit(Executor):
 class Skeptic(Executor):
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
+        job.working("Skeptic", "Checking every take against the data")
         for claim in [c for c in job.claims if c.verdict == "pending"]:
             verify_claim(claim, job.minute)
             offline.explain_simply(claim)
@@ -113,6 +117,7 @@ class Narrator(Executor):
 
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Never, Job]) -> None:
+        job.working("Narrator", "Writing the answer")
         checked = [c for c in job.claims if c.verdict != "pending"]
         job.narrative, job.narrative_source = offline.narrate(job), "template"
         if self.client and any(c.finding for c in checked):
@@ -147,9 +152,9 @@ def build_workflow(client=None):
 
 
 async def run_analysis(minute: int, mode: str = "fan", focus: str = "home", question: str = "",
-                       client=None, provider: str = "offline") -> dict:
+                       client=None, provider: str = "offline", listener=None) -> dict:
     job = Job(minute=minute, mode=mode, focus=focus, question=question.strip()[:300],
-              engine=provider if client else "offline")
+              engine=provider if client else "offline", listener=Relay(listener) if listener else None)
     if minute < 1:
         job.log("Orchestrator", "Waiting for kick-off", "No events have happened yet.", "warn")
         job.narrative, job.narrative_source = "The match hasn't started yet.", "template"
