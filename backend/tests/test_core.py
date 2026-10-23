@@ -33,7 +33,6 @@ class MatchMindTests(unittest.TestCase):
             self.assertTrue(set(insight["evidence_ids"]).issubset(ids))
 
 
-
 # Per-match averages measured from 20 matches of StatsBomb Open Data (Premier League 2015/16).
 # Only these aggregate numbers are used for calibration; no real match data ships with MatchMind.
 STATSBOMB_PL_AVERAGES = {"shots": 24.6, "xg": 2.2, "pass_pct": 76.3, "pressures": 305.5,

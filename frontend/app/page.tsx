@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Side = "home" | "away";
-type Mode = "fan" | "analyst";
+type Mode = "simple" | "fan" | "analyst";
 type Theme = "light" | "dark";
 type Filter = "all" | "goal" | "shot" | "pass" | "pressure" | "turnover";
 type Event = {
@@ -28,9 +28,22 @@ type Verdict = "verified" | "corrected" | "unproven" | "rejected" | "pending";
 type Claim = {
   id: string; team: Side; metric: string; start: number; end: number; value: number;
   text: string; evidence_ids: string[]; proposed_by: string; revision_of: string | null;
-  verdict: Verdict; reason: string; finding: string; premise: boolean;
+  verdict: Verdict; reason: string; finding: string; premise: boolean; plain: string; plain_finding: string;
 };
 type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
+type Category = "scoring" | "creating" | "progression" | "defending" | "ball_security";
+type Player = {
+  name: string; team: Side; team_name: string; number: number; position: string; impact: number;
+  values: Record<Category, number>; counts: Record<string, number>;
+  moments: { event_id: string; what: string; points: number }[];
+};
+type Duel = { a: Player; b: Player; winner: string | null; verdict: string; categories: { key: Category; label: string }[] };
+const PLAIN_CATEGORY: Record<Category, string> = {
+  scoring: "Scoring", creating: "Setting up teammates", progression: "Moving the ball towards goal",
+  defending: "Winning the ball back", ball_security: "Not losing the ball",
+};
+const POSITION: Record<string, string> = { GK: "Goalkeeper", DF: "Defender", MF: "Midfielder", FW: "Forward" };
+
 type Analysis = {
   engine: "foundry" | "nebius" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
   claims: Claim[]; trace: TraceStep[]; minute: number;
@@ -42,8 +55,9 @@ const VERDICT_LABEL: Record<Verdict, string> = {
   verified: "✓ Holds up", corrected: "◐ Half-right", unproven: "? Not enough evidence", rejected: "✕ Doesn't hold up", pending: "Pending",
 };
 
-function takeSource(c: Claim): string {
-  if (c.premise) return "Your question assumes";
+function takeSource(c: Claim, simple: boolean): string {
+  if (c.premise) return simple ? "You asked about" : "Your question assumes";
+  if (simple) return c.revision_of ? "On second thoughts" : "People are saying";
   return c.revision_of ? "Pundit, rethinking" : "The pundit says";
 }
 const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
@@ -94,6 +108,9 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [pick, setPick] = useState<{ a: string; b: string }>({ a: "", b: "" });
+  const [duel, setDuel] = useState<Duel | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
 
@@ -140,6 +157,34 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [playing]);
   useEffect(() => { if (minute === 90) setPlaying(false); }, [minute]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/players?minute=${minute}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: { players: Player[] }) => setPlayers(result.players))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [minute]);
+
+  // default duel: the most influential goalscorer against the most influential defender
+  useEffect(() => {
+    if (pick.a || players.length === 0) return;
+    const scorer = players.find((p) => p.position === "FW") ?? players[0];
+    const defender = players.find((p) => p.position === "DF" && p.name !== scorer.name) ?? players[1];
+    setPick({ a: scorer.name, b: defender.name });
+  }, [players, pick.a]);
+
+  useEffect(() => {
+    if (!pick.a || !pick.b) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ a: pick.a, b: pick.b, minute: String(minute), mode });
+    fetch(`/api/compare?${params}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: Duel) => setDuel(result))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [pick, minute, mode]);
+
   const runAgents = useCallback(async (q: string) => {
     setPlaying(false);
     setAnalysisStatus("loading");
@@ -300,6 +345,7 @@ export default function Home() {
           <div className="control-row">
             <span className="control-label">VIEWER PROFILE</span>
             <div className="seg">
+              <button className={mode === "simple" ? "active" : ""} onClick={() => setMode("simple")}>New to football</button>
               <button className={mode === "fan" ? "active" : ""} onClick={() => setMode("fan")}>Fan view</button>
               <button className={mode === "analyst" ? "active" : ""} onClick={() => setMode("analyst")}>Analyst view</button>
             </div>
@@ -376,21 +422,21 @@ export default function Home() {
                 return (
                   <article key={c.id} className={`take ${c.verdict} ${c.premise ? "premise" : ""}`}>
                     <div className="take-top">
-                      <span>{takeSource(c)}</span>
+                      <span>{takeSource(c, mode === "simple")}</span>
                       <span className={`verdict ${c.verdict}`}>{VERDICT_LABEL[c.verdict]}</span>
                     </div>
-                    <h3>&ldquo;{c.text}&rdquo;</h3>
+                    <h3>&ldquo;{mode === "simple" && c.plain ? c.plain : c.text}&rdquo;</h3>
                     <div className="take-data">
-                      <b>THE DATA</b>
-                      <p>{c.finding || c.reason}</p>
-                      {c.verdict === "corrected" && <small>{c.reason}</small>}
+                      <b>{mode === "simple" ? "WHAT ACTUALLY HAPPENED" : "THE DATA"}</b>
+                      <p>{mode === "simple" ? c.plain_finding || c.reason : c.finding || c.reason}</p>
+                      {c.verdict === "corrected" && mode !== "simple" && <small>{c.reason}</small>}
                     </div>
                     {rethink && (
                       <div className={`rethink ${rethink.verdict}`}>
-                        <b>RETHINK</b> &ldquo;{rethink.text}&rdquo; <span className={`verdict ${rethink.verdict}`}>{VERDICT_LABEL[rethink.verdict]}</span>
+                        <b>{mode === "simple" ? "ACTUALLY" : "RETHINK"}</b> &ldquo;{mode === "simple" && rethink.plain ? rethink.plain : rethink.text}&rdquo; <span className={`verdict ${rethink.verdict}`}>{VERDICT_LABEL[rethink.verdict]}</span>
                       </div>
                     )}
-                    {c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
+                    {mode !== "simple" && c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
                       <div className="evidence"><b>SOURCE EVENTS</b>{c.evidence_ids.join(" · ")}</div>
                     )}
                   </article>
@@ -413,9 +459,75 @@ export default function Home() {
         )}
       </section>
 
+      <section className="surface duel">
+        <div className="panel-head">
+          <h2><span className="section-numeral">04</span>Player duel</h2>
+          <span className="panel-meta">Impact so far · every action counts, not just goals</span>
+        </div>
+        <div className="duel-pickers">
+          {(["a", "b"] as const).map((slot, i) => (
+            <label key={slot} className={`picker ${slot}`}>
+              <span>{i === 0 ? "PLAYER A" : "PLAYER B"}</span>
+              <select value={pick[slot]} onChange={(e) => setPick({ ...pick, [slot]: e.target.value })}>
+                {(["home", "away"] as Side[]).map((side) => (
+                  <optgroup key={side} label={data?.teams[side].name ?? side}>
+                    {players.filter((p) => p.team === side).sort((x, y) => x.number - y.number).map((p) => (
+                      <option key={p.name} value={p.name}>{p.number}. {p.name} ({POSITION[p.position]})</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+        {duel && (
+          <>
+            <div className="recap-box ai duel-verdict"><b>{duel.winner ? `${duel.winner.toUpperCase()} · MORE IMPACT` : "TOO CLOSE TO CALL"}</b><p>{duel.verdict}</p></div>
+            <div className="duel-board">
+              <div className="stat-heading"><span>{duel.a.name}</span><span>IMPACT POINTS</span><span>{duel.b.name}</span></div>
+              {[...duel.categories.map((c) => ({ label: mode === "simple" ? PLAIN_CATEGORY[c.key] : c.label, h: duel.a.values[c.key], a: duel.b.values[c.key] })),
+                { label: "Total impact", h: duel.a.impact, a: duel.b.impact }].map((r) => {
+                const h = Math.max(0, r.h), a = Math.max(0, r.a), total = h + a;
+                const share = total > 0 ? (h / total) * 100 : 50;
+                return (
+                  <div className={`stat-row ${r.label === "Total impact" ? "total" : ""}`} key={r.label}>
+                    <div className="stat-nums">
+                      <strong className={r.h > r.a ? "lead" : ""}>{r.h}</strong>
+                      <span>{r.label}</span>
+                      <strong className={r.a > r.h ? "lead" : ""}>{r.a}</strong>
+                    </div>
+                    <div className="bar"><i className="bar-h" style={{ width: `${share}%` }} /><i className="bar-a" style={{ width: `${100 - share}%` }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="moments">
+              {[duel.a, duel.b].map((p) => (
+                <div key={p.name}>
+                  <b>{p.name.toUpperCase()} · BIGGEST MOMENTS</b>
+                  <ul>
+                    {p.moments.length ? p.moments.map((m) => (
+                      <li key={m.event_id}><span>{m.what}</span><code className={m.points < 0 ? "neg" : ""}>{m.points > 0 ? "+" : ""}{m.points}</code></li>
+                    )) : <li><span>Nothing yet</span></li>}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="leaders">
+          <b>MOST IMPACT SO FAR</b>
+          {players.slice(0, 5).map((p, i) => (
+            <button key={p.name} onClick={() => setPick({ ...pick, a: p.name === pick.b ? pick.a : p.name })}>
+              {i + 1}. {p.name} <small>{POSITION[p.position]} · {p.impact}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="surface stats-panel">
         <div className="panel-head">
-          <h2><span className="section-numeral">04</span>Match by the numbers</h2>
+          <h2><span className="section-numeral">05</span>Match by the numbers</h2>
           <span className="panel-meta">Cumulative · through {minute}&apos;</span>
         </div>
         <div className="stat-heading"><span>{home?.abbr ?? "NBR"}</span><span>METRIC</span><span>{away?.abbr ?? "RSU"}</span></div>

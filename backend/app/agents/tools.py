@@ -48,6 +48,14 @@ def pick_evidence(team: str, metric: str, start: int, end: int, limit: int = 4) 
     return [e["id"] for e in window_events(start, end) if supports(e, team, metric)][-limit:]
 
 
+# differences smaller than this aren't worth a take either way
+MIN_GAP = {"possession": 3.0, "pass_accuracy": 3.0, "xg": 0.1}
+
+
+def too_close(metric: str, a: float, b: float) -> bool:
+    return abs(a - b) < MIN_GAP.get(metric, 2)
+
+
 def _metric(team: str, metric: str, start: int, end: int) -> float | None:
     stats = window_stats(team, start, end)
     if metric == "pass_accuracy" and stats["passes"] < MIN_PASSES_FOR_ACCURACY:
@@ -116,6 +124,8 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
         sample = MIN_SAMPLE if claim.metric == "pass_accuracy" else actual + baseline
     if sample < MIN_SAMPLE:
         return verdict("unproven", "Too few events to call it a pattern either way.")
+    if too_close(claim.metric, actual, baseline):
+        return verdict("unproven", "Too close to call.")
     holds = actual > baseline if claim.relation == "more" else actual < baseline
     if not holds:
         return verdict("rejected", "Level." if actual == baseline else "The data points the other way.")

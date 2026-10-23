@@ -7,13 +7,14 @@ from dotenv import load_dotenv
 # model keys live in backend/.env (git-ignored); real environment variables take precedence
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .agents import model_client, run_analysis
 from .agents.llm import configured_provider
 from .analysis import build_state
+from .players import compare, ranking
 from .synthetic import EVENTS, TEAMS
 
 app = FastAPI(title="MatchMind API", version="0.2.0")
@@ -26,7 +27,7 @@ app.add_middleware(
 
 class AnalyzeRequest(BaseModel):
     minute: int = Field(ge=0, le=90)
-    mode: str = Field("fan", pattern="^(fan|analyst)$")
+    mode: str = Field("fan", pattern="^(simple|fan|analyst)$")
     focus: str = Field("home", pattern="^(home|away)$")
     question: str = Field("", max_length=300)
 
@@ -54,7 +55,7 @@ def events(minute: int = Query(90, ge=0, le=90)):
 @app.get("/api/state")
 def state(
     minute: int = Query(0, ge=0, le=90),
-    mode: str = Query("fan", pattern="^(fan|analyst)$"),
+    mode: str = Query("fan", pattern="^(simple|fan|analyst)$"),
     focus: str = Query("home", pattern="^(home|away)$"),
 ):
     return build_state(minute, mode, focus)
@@ -70,3 +71,21 @@ async def analyze(body: AnalyzeRequest):
     client, provider = model_client()
     result = await run_analysis(body.minute, body.mode, body.focus, body.question, client=client, provider=provider)
     return {"synthetic": True, **result}
+
+
+@app.get("/api/players")
+def players(minute: int = Query(90, ge=0, le=90)):
+    """Every player's impact so far: credit for all actions, not just goals and assists."""
+    return {"synthetic": True, "minute": minute, "players": ranking(minute)}
+
+
+@app.get("/api/compare")
+def compare_players(
+    a: str, b: str,
+    minute: int = Query(90, ge=0, le=90),
+    mode: str = Query("fan", pattern="^(simple|fan|analyst)$"),
+):
+    try:
+        return {"synthetic": True, **compare(a, b, minute, mode)}
+    except KeyError:
+        raise HTTPException(404, "Unknown player") from None

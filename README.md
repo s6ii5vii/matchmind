@@ -18,6 +18,10 @@ Five agents run as a [Microsoft Agent Framework](https://github.com/microsoft/ag
 
 Models can draft takes and wording, but every number a viewer sees is recomputed from the event log, and no agent can see events after the current minute. The dashboard shows each take next to the data, with the full agent trace one click away.
 
+**For everyone.** Every answer comes in three versions: *New to football* (no jargon, a short answer first, then the reasons in everyday words), *Fan* and *Analyst* (with the numbers and evidence events).
+
+**Player duel.** Compare any two players by their impact so far, not just goals and assists. Every action earns or costs impact points: scoring and shot quality, setting up chances, passes that move the ball towards goal, interceptions, tackles and balls won back (worth more near your own goal), and losing the ball. A hard-working defender can out-impact a striker who scored, just as defenders sometimes win man of the match. The model is rule-based and transparent, in the spirit of action-value metrics like VAEP and expected threat.
+
 ## Run it
 
 Requires Python 3.10+ and Node.js 20+.

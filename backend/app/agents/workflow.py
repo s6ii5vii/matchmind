@@ -93,6 +93,7 @@ class Skeptic(Executor):
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
         for claim in [c for c in job.claims if c.verdict == "pending"]:
             verify_claim(claim, job.minute)
+            offline.explain_simply(claim)
             status = {"verified": "ok", "corrected": "warn", "unproven": "info", "rejected": "reject"}[claim.verdict]
             label = {"verified": "Holds up", "corrected": "Half-right", "unproven": "Not enough evidence",
                      "rejected": "Doesn't hold up"}[claim.verdict]

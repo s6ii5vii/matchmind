@@ -114,7 +114,9 @@ NARRATOR_INSTRUCTIONS = """You are the Narrator agent in MatchMind. The match is
 You get takes (from the viewer's question and a pundit), each with the Skeptic's verdict and what the data shows.
 Tell the reader what holds up and what doesn't, starting with the viewer's question if there is one.
 Use ONLY the data lines given; never add numbers, players, causes or events. "fan" readers: 2-3 short, lively
-sentences, at most one number. "analyst" readers: precise, with the numbers. 70 words maximum. No real clubs."""
+sentences, at most one number. "analyst" readers: precise, with the numbers. "simple" readers have never watched
+football: no jargon at all (no xG, press, final third, possession stats, formations), start with a one-line short
+answer, then explain in everyday words a child would follow, at most one number. 70 words maximum. No real clubs."""
 
 
 def _json(text: str) -> dict:
@@ -156,7 +158,7 @@ async def propose(client, job: Job, rejected: list[Claim] | None = None) -> list
 async def narrate(client, job: Job, checked: list[Claim]) -> str:
     agent = Agent(client=client, name="Narrator", instructions=NARRATOR_INSTRUCTIONS)
     takes = [{"from": "viewer's question" if c.premise else "pundit", "take": c.text, "verdict": c.verdict,
-              "data": c.finding or c.reason} for c in checked]
+              "data": c.finding or c.reason, "in_plain_words": c.plain_finding} for c in checked]
     response = await agent.run(
         f"Reader: {job.mode}. Following {TEAMS[job.focus]['name']}. Question: {job.question or 'none'}. "
         f"Checked takes: {json.dumps(takes)}")

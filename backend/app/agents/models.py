@@ -34,6 +34,8 @@ class Claim:
     verdict: str = "pending"  # verified | corrected | unproven | rejected
     reason: str = ""
     finding: str = ""  # what the event log actually shows, written by the Skeptic
+    plain: str = ""  # the take in everyday words, for people new to football
+    plain_finding: str = ""  # the finding in everyday words
     actual_value: float | None = None
     compare_value: float | None = None
 

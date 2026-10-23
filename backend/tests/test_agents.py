@@ -10,6 +10,7 @@ from app.agents.llm import configured_provider, model_client, ungrounded_numbers
 from app.agents.models import Claim, Job
 from app.agents.tools import verify_claim, window_stats
 from app.main import app
+from app.players import compare, ranking
 from app.synthetic import EVENTS
 
 
@@ -158,6 +159,29 @@ class ProviderTests(unittest.TestCase):
         self.assertIsNotNone(client)
 
 
+class PlayerImpactTests(unittest.TestCase):
+    def test_impact_only_uses_events_so_far(self):
+        before = {p["name"]: p for p in ranking(71)}
+        after = {p["name"]: p for p in ranking(73)}
+        self.assertEqual(before["A. Okafor"]["counts"]["goals"], 0)  # scores at 72:36
+        self.assertEqual(after["A. Okafor"]["counts"]["goals"], 1)
+
+    def test_defending_earns_impact_not_just_goals(self):
+        players = ranking(90)
+        defenders = [p for p in players if p["position"] == "DF"]
+        self.assertTrue(any(p["values"]["defending"] > 50 for p in defenders))
+        scorers_without_much_else = [p for p in players if p["counts"]["goals"]]
+        best_defender = max(defenders, key=lambda p: p["impact"])
+        self.assertGreater(best_defender["impact"], min(p["impact"] for p in scorers_without_much_else) * 0.8)
+
+    def test_compare_explains_the_biggest_edge(self):
+        result = compare("K. Mensah", "S. Walker", 90)
+        self.assertIn(result["winner"], ("K. Mensah", "S. Walker", None))
+        self.assertIn("impact points", result["verdict"])
+        simple = compare("K. Mensah", "S. Walker", 90, "simple")["verdict"]
+        self.assertNotIn("xG", simple)
+
+
 class ApiTests(unittest.TestCase):
     @mock.patch.dict(os.environ, {}, clear=True)  # rule-based agents, even if a local .env has keys
     def test_analyze_endpoint(self):
@@ -167,6 +191,22 @@ class ApiTests(unittest.TestCase):
         body = res.json()
         self.assertTrue(body["synthetic"])
         self.assertEqual(body["claims"][0]["metric"], "pressures")
+
+    def test_players_and_compare_endpoints(self):
+        client = TestClient(app)
+        players = client.get("/api/players?minute=60").json()["players"]
+        self.assertEqual(len(players), 22)
+        res = client.get("/api/compare", params={"a": players[0]["name"], "b": players[-1]["name"], "minute": 60})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(client.get("/api/compare", params={"a": "Nobody", "b": "Nobody"}).status_code, 404)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_simple_mode_has_no_jargon(self):
+        res = TestClient(app).post("/api/analyze", json={"minute": 70, "mode": "simple", "focus": "home",
+                                                         "question": "Why did Riverside lose control after 60?"})
+        narrative = res.json()["narrative"]
+        for jargon in ("xG", "final third", "press", "possession"):
+            self.assertNotIn(jargon, narrative)
 
     def test_analyze_validates_input(self):
         self.assertEqual(TestClient(app).post("/api/analyze", json={"minute": 95}).status_code, 422)

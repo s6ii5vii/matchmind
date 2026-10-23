@@ -50,6 +50,12 @@ TOUCH = {
     "attacking": {"GK": 0, "DF": 1, "MF": 4, "FW": 6},
 }
 SHOOTERS = {"GK": 0, "DF": 0.6, "MF": 2.5, "FW": 6}
+# who presses, tackles and intercepts in each third (from the defending side's point of view)
+DEFEND = {
+    "defensive": {"GK": 0.1, "DF": 6, "MF": 3, "FW": 0.5},
+    "middle": {"GK": 0, "DF": 3, "MF": 6, "FW": 2},
+    "attacking": {"GK": 0, "DF": 0.5, "MF": 4, "FW": 6},
+}
 
 
 def phase(minute: int) -> dict:
@@ -125,7 +131,7 @@ class MatchSim:
             t += rng.uniform(2.0, 5.5) if goal is None else 3.0
             pressed = rng.random() < press_rate * (1.15 if third(depth) == "defensive" else 1.0)
             if pressed:
-                presser = self.pick(opp, TOUCH[third(100 - depth)])
+                presser = self.pick(opp, DEFEND[third(100 - depth)])
                 self.add(t, opp, presser, "pressure", 100 - depth, y, outcome="applied")
                 # a press can win the ball outright
                 if goal is None and rng.random() < 0.075 * error_boost:
@@ -171,7 +177,7 @@ class MatchSim:
                     continue
                 if fate < 0.58:
                     finish("intercepted")
-                    interceptor = self.pick(opp, TOUCH[third(100 - end_depth)])
+                    interceptor = self.pick(opp, DEFEND[third(100 - end_depth)])
                     self.add(t + 1, opp, interceptor, "interception", 100 - end_depth, end_y, outcome="won")
                     return t + 1, opp, 100 - end_depth, end_y
                 if fate < 0.86:
@@ -186,15 +192,15 @@ class MatchSim:
             # duels and fouls on the receiver
             roll = rng.random()
             if goal is None and roll < 0.022 * error_boost:
-                tackler = self.pick(opp, TOUCH[third(100 - depth)])
+                tackler = self.pick(opp, DEFEND[third(100 - depth)])
                 self.add(t + 1.5, opp, tackler, "tackle", 100 - depth, y, outcome="won")
                 finish("tackled")
                 return t + 1.5, opp, 100 - depth, y
             if goal is None and roll < 0.042:
-                tackler = self.pick(opp, TOUCH[third(100 - depth)])
+                tackler = self.pick(opp, DEFEND[third(100 - depth)])
                 self.add(t + 1.5, opp, tackler, "tackle", 100 - depth, y, outcome="lost")
             elif goal is None and roll < 0.083:
-                fouler = self.pick(opp, TOUCH[third(100 - depth)])
+                fouler = self.pick(opp, DEFEND[third(100 - depth)])
                 self.add(t + 1.5, opp, fouler, "foul", 100 - depth, y, outcome="committed")
                 finish("fouled")
                 return t + rng.uniform(15, 30), team, depth, y
