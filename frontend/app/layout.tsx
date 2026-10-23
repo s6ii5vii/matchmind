@@ -1,4 +1,3 @@
-// @ts-expect-error: Next.js loads this global stylesheet at runtime.
 import "./globals.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
