@@ -138,7 +138,7 @@ class KeyMomentTests(unittest.TestCase):
         moment = next(m for m in key_moments(90) if m["minute"] == 72)
         result = asyncio.run(run_analysis(90, "fan", "home", moment["question"]))
         self.assertEqual(result["window"], [63, 72])
-        self.assertTrue(result["narrative"].startswith("At 72:36, I. Brown gave the ball away"))
+        self.assertTrue(result["narrative"].startswith("At 71:36, I. Brown gave the ball away"))
         self.assertIn("A. Okafor scored", result["narrative"])
 
     def test_asking_about_a_moment_that_has_not_happened_says_nothing_about_it(self):
@@ -201,7 +201,7 @@ class PlayerRatingTests(unittest.TestCase):
     def test_rating_only_uses_events_so_far(self):
         before = {p["name"]: p for p in ranking(71)}
         after = {p["name"]: p for p in ranking(73)}
-        self.assertEqual(before["A. Okafor"]["counts"]["goals"], 0)  # scores at 72:36
+        self.assertEqual(before["A. Okafor"]["counts"]["goals"], 0)  # scores at 71:36 (72nd minute)
         self.assertEqual(after["A. Okafor"]["counts"]["goals"], 1)
         self.assertGreater(after["A. Okafor"]["rating"], before["A. Okafor"]["rating"])
 

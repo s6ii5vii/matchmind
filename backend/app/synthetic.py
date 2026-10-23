@@ -252,7 +252,8 @@ def generate_events(seed: int = 2026) -> list[dict]:
     events.sort(key=lambda e: (e["t"], e["possession"]))
     for idx, event in enumerate(events, start=1):
         event["id"] = f"SIM-{idx:04d}"
-        event["clock"] = f"{event['minute']:02d}:{event['second']:02d}"
+        # elapsed match time, as on TV: 71:36 is in the 72nd minute
+        event["clock"] = f"{event['t'] // 60:02d}:{event['t'] % 60:02d}"
     return events
 
 

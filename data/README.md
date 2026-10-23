@@ -12,7 +12,7 @@ About 1,500 events over 220 possessions. Per-match totals are calibrated against
 | Column | Meaning |
 |---|---|
 | `id` | Event ID (`SIM-0001`...). The agents cite these as evidence. |
-| `clock`, `minute`, `second`, `t` | Match minute (1-90), second within it, seconds since kick-off |
+| `clock`, `minute`, `second`, `t` | Elapsed time as on TV (71:36), the match minute it falls in (72), second within that minute, seconds since kick-off |
 | `team` | `home` or `away`: the team of the player making the action |
 | `player`, `number`, `position` | Who did it (GK, DF, MF, FW) |
 | `type` | `pass`, `pressure`, `tackle`, `interception`, `recovery`, `shot`, `turnover`, `foul` |
