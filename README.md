@@ -62,4 +62,19 @@ If both are set, Foundry is used; set `$env:MATCHMIND_PROVIDER='nebius'` to choo
 
 ## Data and limitations
 
-All clubs, players and events are fictional. `backend/app/synthetic.py` simulates a full match possession by possession from a fixed seed: about 1,350 events over 300 possessions, with 11-player squads, passes with start and end positions, pressing that forces errors, interceptions, tackles, shots with xG, and time-based possession. The match follows a story (Riverside's spell before half-time, Northbridge's pressing spell after the hour) so the agents have something real to find. No real Premier League data or footage is used, and xG values are illustrative, not a trained model.
+All clubs, players and events are fictional. `backend/app/synthetic.py` simulates a full match possession by possession from a fixed seed: about 1,500 events over 220 possessions, with 11-player squads, passes with start and end positions, pressing that forces errors, interceptions, tackles, fouls, shots with xG, and time-based possession. The match follows a story (Riverside's spell before half-time, Northbridge's pressing spell after the hour) so the agents have something real to find.
+
+The simulator is calibrated against [StatsBomb Open Data](https://github.com/statsbomb/open-data): we measured 20 Premier League 2015/16 matches and tuned towards their per-match averages. Only those aggregate numbers are used, and a test keeps the simulation within range:
+
+| Per match | Real (StatsBomb, 20 PL matches) | MatchMind |
+|---|---|---|
+| Shots | 24.6 | 25 |
+| xG | 2.2 | 2.2 |
+| Pass completion | 76% | 78% |
+| Pressures | 306 | 302 |
+| Interceptions | 25 | 30 |
+| Tackles | 42 | 52 |
+| Fouls | 25 | 31 |
+| Possessions | 183 | 219 |
+
+No real Premier League data or footage ships with MatchMind, and xG values are illustrative, not a trained model.

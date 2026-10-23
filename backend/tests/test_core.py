@@ -33,5 +33,30 @@ class MatchMindTests(unittest.TestCase):
             self.assertTrue(set(insight["evidence_ids"]).issubset(ids))
 
 
+
+# Per-match averages measured from 20 matches of StatsBomb Open Data (Premier League 2015/16).
+# Only these aggregate numbers are used for calibration; no real match data ships with MatchMind.
+STATSBOMB_PL_AVERAGES = {"shots": 24.6, "xg": 2.2, "pass_pct": 76.3, "pressures": 305.5,
+                         "interceptions": 25.1, "tackles": 41.9, "fouls": 25.2, "possessions": 183.1}
+
+
+class RealismTests(unittest.TestCase):
+    def test_simulated_match_is_close_to_real_match_averages(self):
+        passes = [e for e in EVENTS if e["type"] == "pass"]
+        shots = [e for e in EVENTS if e["type"] == "shot"]
+        ours = {
+            "shots": len(shots), "xg": sum(e["xg"] for e in shots),
+            "pass_pct": 100 * sum(e["outcome"] == "complete" for e in passes) / len(passes),
+            "pressures": sum(e["type"] == "pressure" for e in EVENTS),
+            "interceptions": sum(e["type"] == "interception" for e in EVENTS),
+            "tackles": sum(e["type"] == "tackle" for e in EVENTS),
+            "fouls": sum(e["type"] == "foul" for e in EVENTS),
+            "possessions": len({e["possession"] for e in EVENTS}),
+        }
+        for stat, real in STATSBOMB_PL_AVERAGES.items():
+            with self.subTest(stat=stat):
+                self.assertLess(abs(ours[stat] - real) / real, 0.40, f"{stat}: ours {ours[stat]:.1f}, real {real}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,8 +7,8 @@ Model-written narration lives in the agent workflow (app/agents).
 from .synthetic import EVENTS, TEAMS
 
 
-LOST_BALL = {"intercepted", "pass out of play", "dispossessed", "tackled", "miscontrol"}
-RECOVERY = {"interception", "tackle"}
+LOST_BALL = {"intercepted", "pass misplaced", "pass out of play", "dispossessed", "tackled", "miscontrol"}
+RECOVERY = {"interception", "tackle", "recovery"}
 
 
 def possession_seconds(events: list[dict]) -> dict:

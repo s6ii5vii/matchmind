@@ -39,8 +39,8 @@ GOALS = [
 
 # how each side plays: home keep the ball, away go direct
 STYLE = {
-    "home": {"pass_acc": 0.86, "press": 0.30, "direct": 0.9, "shoot": 0.30},
-    "away": {"pass_acc": 0.81, "press": 0.22, "direct": 1.25, "shoot": 0.34},
+    "home": {"pass_acc": 0.85, "press": 0.34, "direct": 0.85, "shoot": 0.16},
+    "away": {"pass_acc": 0.80, "press": 0.27, "direct": 1.15, "shoot": 0.18},
 }
 
 # who touches the ball in each third (attacking-direction), weighted by position
@@ -103,7 +103,7 @@ class MatchSim:
 
     def xg(self, depth: float, y: float, header: bool) -> float:
         metres = math.hypot((100 - depth) * 1.05, (y - 50) * 0.68)
-        value = 0.75 * math.exp(-metres / 7.5) * (0.55 if header else 1.0)
+        value = 0.62 * math.exp(-metres / 7.5) * (0.55 if header else 1.0)
         return round(min(0.85, max(0.015, value)), 3)
 
     def run_possession(self, t: float, team: str, depth: float, y: float, minute_phase: dict,
@@ -121,14 +121,14 @@ class MatchSim:
         def finish(reason: str) -> None:
             self.events[-1]["possession_end"] = reason
 
-        for _ in range(rng.randint(6, 18) if goal is None else 4):
+        for _ in range(rng.randint(8, 26) if goal is None else 4):
             t += rng.uniform(2.0, 5.5) if goal is None else 3.0
             pressed = rng.random() < press_rate * (1.15 if third(depth) == "defensive" else 1.0)
             if pressed:
                 presser = self.pick(opp, TOUCH[third(100 - depth)])
                 self.add(t, opp, presser, "pressure", 100 - depth, y, outcome="applied")
                 # a press can win the ball outright
-                if goal is None and rng.random() < 0.13 * error_boost:
+                if goal is None and rng.random() < 0.075 * error_boost:
                     self.add(t + 0.5, team, holder, "turnover", depth, y, outcome="lost", under_pressure=True)
                     finish("dispossessed")
                     self.add(t + 1, opp, presser, "tackle", 100 - depth, y, outcome="won")
@@ -162,33 +162,48 @@ class MatchSim:
                      end_x=self.to_x(team, end_depth), end_y=round(end_y, 1), receiver=receiver[2] if success else None,
                      under_pressure=pressed, distance_m=round(distance, 1), difficulty=round(difficulty, 2))
             if not success:
-                finish("intercepted" if rng.random() < 0.55 else "pass out of play")
-                if self.events[-1]["possession_end"] == "intercepted":
+                fate = rng.random()
+                if fate < 0.42:  # loose ball, but the passing side gets there first
+                    t += 2
+                    holder = self.pick(team, TOUCH[third(end_depth)])
+                    self.add(t, team, holder, "recovery", end_depth, end_y, outcome="won")
+                    depth, y = end_depth, end_y
+                    continue
+                if fate < 0.58:
+                    finish("intercepted")
                     interceptor = self.pick(opp, TOUCH[third(100 - end_depth)])
                     self.add(t + 1, opp, interceptor, "interception", 100 - end_depth, end_y, outcome="won")
                     return t + 1, opp, 100 - end_depth, end_y
+                if fate < 0.86:
+                    finish("pass misplaced")
+                    collector = self.pick(opp, TOUCH[third(100 - end_depth)])
+                    self.add(t + 2, opp, collector, "recovery", 100 - end_depth, end_y, outcome="won")
+                    return t + 2, opp, 100 - end_depth, end_y
+                finish("pass out of play")
                 return t + rng.uniform(8, 18), opp, 100 - end_depth, end_y
             holder, depth, y = receiver, end_depth, end_y
 
             # duels and fouls on the receiver
             roll = rng.random()
-            if goal is None and roll < 0.05 * error_boost:
+            if goal is None and roll < 0.022 * error_boost:
                 tackler = self.pick(opp, TOUCH[third(100 - depth)])
                 self.add(t + 1.5, opp, tackler, "tackle", 100 - depth, y, outcome="won")
                 finish("tackled")
                 return t + 1.5, opp, 100 - depth, y
-            if goal is None and roll < 0.07:
+            if goal is None and roll < 0.042:
                 tackler = self.pick(opp, TOUCH[third(100 - depth)])
                 self.add(t + 1.5, opp, tackler, "tackle", 100 - depth, y, outcome="lost")
-            elif goal is None and roll < 0.085:
+            elif goal is None and roll < 0.083:
                 fouler = self.pick(opp, TOUCH[third(100 - depth)])
                 self.add(t + 1.5, opp, fouler, "foul", 100 - depth, y, outcome="committed")
                 finish("fouled")
                 return t + rng.uniform(15, 30), team, depth, y
-            elif goal is None and roll < 0.10 * error_boost:
+            elif goal is None and roll < 0.083 + 0.012 * error_boost:
                 self.add(t + 1.5, team, holder, "turnover", depth, y, outcome="lost")
                 finish("miscontrol")
-                return t + 2, opp, 100 - depth, y
+                collector = self.pick(opp, TOUCH[third(100 - depth)])
+                self.add(t + 2.5, opp, collector, "recovery", 100 - depth, y, outcome="won")
+                return t + 2.5, opp, 100 - depth, y
 
         if goal is not None:
             minute, second, _, scorer_name, value = goal

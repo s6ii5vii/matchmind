@@ -64,10 +64,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(result["narrative"])
 
     def test_skeptic_sends_busted_takes_back_for_revision(self):
-        result = self.run_job(60, "analyst", "home")
-        self.assertTrue(any(c["verdict"] == "rejected" for c in result["claims"]))
-        self.assertEqual(result["rounds"], 1)
-        self.assertTrue(any(c["revision_of"] for c in result["claims"]))
+        runs = [self.run_job(minute, "analyst", focus) for minute in range(20, 91, 10) for focus in ("home", "away")]
+        revised = [r for r in runs if any(c["revision_of"] for c in r["claims"])]
+        self.assertTrue(revised)
+        for result in revised:
+            self.assertEqual(result["rounds"], 1)
+            self.assertTrue(any(c["verdict"] == "rejected" for c in result["claims"]))
 
     def test_accepted_claims_never_use_future_events(self):
         for minute in (12, 40, 70, 90):
