@@ -20,7 +20,7 @@ Models can draft takes and wording, but every number a viewer sees is recomputed
 
 **For everyone.** Every answer comes in three versions: *New to football* (no jargon, a short answer first, then the reasons in everyday words), *Fan* and *Analyst* (with the numbers and evidence events).
 
-**Player duel.** Compare any two players by their impact so far, not just goals and assists. Every action earns or costs impact points: scoring and shot quality, setting up chances, passes that move the ball towards goal, interceptions, tackles and balls won back (worth more near your own goal), and losing the ball. A hard-working defender can out-impact a striker who scored, just as defenders sometimes win man of the match. The model is rule-based and transparent, in the spirit of action-value metrics like VAEP and expected threat.
+**Player rating.** Every player gets a rating out of 10 that starts at 6.0 and moves with the match. Instead of just adding up actions, it asks who drove the moments that mattered: every move that ends in a shot or goal shares its value between the shooter, the player who set it up, the others in the move and whoever won the ball back to start it, and every chance the opponent creates straight after a player loses the ball is charged to that player. Everyday actions (passes forward, ball wins, worth more near your own goal, losing the ball) count for less. Each action is worth -10 to +10 impact points. Compare any two players in the Player duel: a hard-working defender can outrate a striker who scored.
 
 ## Run it
 

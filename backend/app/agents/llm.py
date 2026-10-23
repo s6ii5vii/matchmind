@@ -13,6 +13,7 @@ from agent_framework import Agent
 
 from ..synthetic import TEAMS
 from .models import METRIC_LABELS, Claim, Job
+from .offline import PHRASES
 from .tools import EVENTS_BY_ID, window_events
 
 API_VERSION = "2025-04-01-preview"  # GPT-5 family needs 2025-04-01-preview or later
@@ -103,11 +104,12 @@ and the last few minutes of play (use recent_moves for the passing moves, recent
 have the stats. Read the game honestly and
 give up to 3 confident, punchy takes, the way a good pundit would say them on air. You'll usually be right, but
 you only saw the last few minutes and you're talking about the whole spell, so don't hedge: commit to your read.
+You don't know the stats, so never put numbers in the take's text; put your guess in "value" instead.
 Each take MUST map to a comparison a Skeptic can recompute: metric in {sorted(METRIC_LABELS)}; compare
 "opponent" (same window, other team) or "previous" (the equally long window just before); relation "more" or
 "less"; value = your best guess of the number. Cite event IDs you saw.
 Reply with JSON only: {{"claims": [{{"team": "home|away", "metric": "...", "start": 1, "end": 10,
-"value": 0, "relation": "more|less", "compare": "opponent|previous", "text": "the take, under 14 words",
+"value": 0, "relation": "more|less", "compare": "opponent|previous", "text": "the take, under 14 words, no numbers",
 "evidence_ids": ["SIM-0001"]}}]}}"""
 
 NARRATOR_INSTRUCTIONS = """You are the Narrator agent in MatchMind. The match is fictional.
@@ -122,6 +124,16 @@ answer, then explain in everyday words a child would follow, at most one number.
 def _json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.S)
     return json.loads(match[0]) if match else {}
+
+
+def _take_text(raw: dict) -> str:
+    """The Pundit doesn't know the stats, so a take quoting numbers would spread made-up figures
+    (the Skeptic fixes the value, not the wording). Reword those from the claim itself."""
+    text = str(raw["text"])[:200]
+    phrase = PHRASES.get((str(raw["metric"]), str(raw["relation"])))
+    if re.search(r"\d", text) and phrase and raw["team"] in TEAMS:
+        return phrase.format(T=TEAMS[raw["team"]]["name"])
+    return text
 
 
 async def propose(client, job: Job, rejected: list[Claim] | None = None) -> list[Claim]:
@@ -145,7 +157,7 @@ async def propose(client, job: Job, rejected: list[Claim] | None = None) -> list
             claims.append(Claim(
                 id=f"{prefix}{idx}", team=str(raw["team"]), metric=str(raw["metric"]),
                 start=int(raw["start"]), end=int(raw["end"]), value=float(raw["value"]),
-                relation=str(raw["relation"]), compare=str(raw["compare"]), text=str(raw["text"])[:200],
+                relation=str(raw["relation"]), compare=str(raw["compare"]), text=_take_text(raw),
                 evidence_ids=[str(i) for i in raw.get("evidence_ids", []) if str(i) in EVENTS_BY_ID][:6],
                 proposed_by="Pundit (revision)" if rejected else "Pundit",
                 revision_of=",".join(c.id for c in rejected) if rejected else None,
