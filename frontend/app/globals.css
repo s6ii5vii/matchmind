@@ -347,4 +347,51 @@ footer { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wr
   .feed-body, .live { padding-left: 18px; padding-right: 18px; }
 }
 
+/* the Narrator's answer: the headline of the Agent room */
+.answer { margin: 0 0 22px; padding: 24px 28px; border-radius: 14px; border: 1px solid var(--accent-text); background: var(--surface-2); animation: rise .35s ease-out; }
+.answer b { font: 500 11px var(--mono); letter-spacing: .14em; color: var(--accent-text); }
+.answer p { margin: 12px 0 0; font: 400 clamp(20px, 2.1vw, 26px)/1.4 var(--serif); letter-spacing: -.01em; color: var(--ink); }
+.answer small { display: block; margin-top: 14px; font-size: 12px; color: var(--muted); }
+
+/* key moments */
+.moments-panel { margin-top: 20px; }
+.moments-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; padding: 0 28px 20px; align-items: start; }
+.moments-body .field { margin: 0; position: sticky; top: 16px; }
+.replay-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.replay-line { fill: none; stroke-width: .55; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.6s ease-out forwards; }
+.replay-line.home { stroke: var(--home); }
+.replay-line.away { stroke: var(--away); }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.replay-dot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid #fff; opacity: 0; animation: pop .25s ease-out forwards; }
+.replay-dot.home { background: var(--home); }
+.replay-dot.away { background: var(--away); }
+.replay-dot.win { background: #fff; }
+.replay-dot.goal, .replay-dot.shot { width: 18px; height: 18px; margin: -9px 0 0 -9px; box-shadow: 0 0 0 6px rgba(255, 255, 255, .18); }
+.replay-dot.goal { background: var(--accent); }
+.replay-dot i { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); white-space: nowrap; font: 500 11px var(--mono); font-style: normal; color: #fff; background: rgba(0, 0, 0, .55); padding: 2px 6px; border-radius: 4px; }
+@keyframes pop { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
+.moment-list { list-style: none; margin: 0; padding: 0; }
+.moment-list li { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+.moment-list li.active .moment-text b { color: var(--accent-text); }
+.moment-pick { display: grid; grid-template-columns: 38px 10px 1fr; gap: 10px; align-items: start; border: 0; background: none; padding: 0; color: var(--ink); text-align: left; cursor: pointer; }
+.moment-min { font: 400 22px/1 var(--serif); color: var(--muted); }
+.moment-pick .event-indicator { margin-top: 6px; }
+.moment-text b { display: block; font: 500 14px var(--sans); }
+.moment-list li.goal .moment-text b { font-weight: 700; }
+.moment-text small { display: block; margin-top: 3px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.ask-about { align-self: flex-start; margin-left: 58px; border: 1px solid var(--line-strong); background: transparent; color: var(--ink); padding: 4px 10px; border-radius: 999px; font: 500 11px var(--sans); }
+.ask-about:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.moments-empty { margin: 0 28px 20px; }
+.every-event { margin: 0 28px 24px; border-top: 1px solid var(--line); padding-top: 14px; }
+.every-event summary { cursor: pointer; font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); list-style: none; }
+.every-event summary::before { content: "+ "; color: var(--accent-text); }
+.every-event[open] summary::before { content: "− "; }
+.every-event .tabs, .every-event .event-list { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+@media (max-width: 960px) { .moments-body { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .moments-body { padding: 0 18px 18px; }
+  .every-event, .moments-empty { margin-left: 18px; margin-right: 18px; }
+  .answer { padding: 18px 20px; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

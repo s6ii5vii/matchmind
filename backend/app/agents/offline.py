@@ -7,6 +7,7 @@ sometimes catches it out, and the Skeptic, which checks the whole spell, decides
 
 import re
 
+from ..moments import moment_at, moment_sentence
 from ..synthetic import TEAMS
 from .models import METRIC_LABELS, Claim, Job
 from .tools import other, pick_evidence, too_close, window_stats
@@ -147,6 +148,10 @@ def plan(job: Job) -> None:
         start, end = 1, int(m[1])
     elif m := re.search(r"(?:last|past)\s*(\d{1,2})\s*min", q):
         start, end = job.minute - int(m[1]) + 1, job.minute
+    elif m := re.search(r"\bat\s*(\d{1,2})\b", q):  # "what led to the goal at 72?": the ten minutes up to it
+        start, end = int(m[1]) - 9, int(m[1])
+        if found := moment_at(job.minute, int(m[1]), named_team(q)):
+            job.moment = moment_sentence(found)
     elif "first half" in q:
         start, end = 1, 45
     elif "second half" in q:
@@ -284,9 +289,15 @@ def narrate_simply(job: Job) -> str:
 
 
 def narrate(job: Job) -> str:
-    """Template Narrator: what the question assumed, which takes hold up, which don't and what's really going on."""
-    if job.mode == "simple":
-        return narrate_simply(job)
+    """Template Narrator: what the question assumed, which takes hold up, which don't and what's really going on.
+    A question about a specific moment starts with what actually happened."""
+    text = narrate_simply(job) if job.mode == "simple" else _narrate(job)
+    if not job.moment:
+        return text
+    return f"{job.moment} In the ten minutes before it: {text.removeprefix("What's happening: ")}"
+
+
+def _narrate(job: Job) -> str:
     start, end = job.window
     analyst = job.mode == "analyst"
     data = (lambda c: f" ({c.finding.rstrip('.')})") if analyst else (lambda c: "")

@@ -127,7 +127,8 @@ class MatchSim:
         def finish(reason: str) -> None:
             self.events[-1]["possession_end"] = reason
 
-        for _ in range(rng.randint(8, 26) if goal is None else 4):
+        goal_steps = 4
+        for step in range(rng.randint(8, 26) if goal is None else goal_steps):
             t += rng.uniform(2.0, 5.5) if goal is None else 3.0
             pressed = rng.random() < press_rate * (1.15 if third(depth) == "defensive" else 1.0)
             if pressed:
@@ -164,6 +165,10 @@ class MatchSim:
             difficulty = min(0.95, 0.18 + distance / 95 + (0.12 if end_depth > 70 else 0) + (0.15 if pressed else 0))
             success = goal is not None or rng.random() < style["pass_acc"] + 0.12 - difficulty * 0.45 * error_boost
             receiver = self.pick(team, TOUCH[third(end_depth)], exclude=holder[2])
+            if goal is not None and step == goal_steps - 1:  # the final ball goes to the scorer
+                receiver = next(p for p in SQUADS[team] if p[2] == goal[3])
+                if receiver[2] == holder[2]:  # the scorer can't pass to themselves: someone else plays it
+                    holder = self.pick(team, TOUCH[third(depth)], exclude=receiver[2])
             self.add(t, team, holder, "pass", depth, y, outcome="complete" if success else "incomplete",
                      end_x=self.to_x(team, end_depth), end_y=round(end_y, 1), receiver=receiver[2] if success else None,
                      under_pressure=pressed, distance_m=round(distance, 1), difficulty=round(difficulty, 2))

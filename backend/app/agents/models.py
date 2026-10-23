@@ -82,6 +82,7 @@ class Job:
     claims: list[Claim] = field(default_factory=list)
     rounds: int = 0
     needs_revision: bool = False
+    moment: str = ""  # what happened, when the question asks about a specific key moment
     narrative: str = ""
     narrative_source: str = ""
     trace: list[TraceStep] = field(default_factory=list)

@@ -128,7 +128,8 @@ class Narrator(Executor):
                     job.log("Narrator", "Grounding guard blocked the model's draft",
                             f"Numbers the Skeptic never produced: {', '.join(bad)}. Using the template.", "reject")
                 elif text:
-                    job.narrative, job.narrative_source = text, "model"
+                    job.narrative = f"{job.moment} {text}" if job.moment else text
+                    job.narrative_source = "model"
             except Exception as exc:
                 job.log("Narrator", "Model call failed, using the template", type(exc).__name__, "warn")
         held = sum(c.verdict in ("verified", "corrected") for c in checked)
