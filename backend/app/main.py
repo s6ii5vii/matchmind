@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agents import model_client, run_analysis
@@ -129,3 +131,10 @@ def compare_players(
         return {"synthetic": True, **compare(a, b, minute, mode)}
     except KeyError:
         raise HTTPException(404, "Unknown player") from None
+
+
+# In the deployed container the dashboard is built to static files and served from here,
+# so the site and the API share one URL. Mounted last so /api routes always win.
+STATIC_DIR = Path(os.environ.get("MATCHMIND_STATIC", Path(__file__).resolve().parents[1] / "static"))
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="site")

@@ -112,6 +112,10 @@ NEBIUS_MODEL=openai/gpt-oss-120b   # any Token Factory model that supports tool 
 
 If both are set, Foundry is used unless `MATCHMIND_PROVIDER=nebius`. The Agent room header shows which provider answered.
 
+### Deploy
+
+One container serves the dashboard and the API at a single URL. [DEPLOY.md](DEPLOY.md) walks through deploying it to Azure Container Apps.
+
 ### Tests
 
 ```powershell
@@ -145,6 +149,7 @@ backend/app/
   moments.py       key moments
   main.py          FastAPI app
   export.py        writes data/ (python -m app.export)
-frontend/app/      Next.js dashboard
+frontend/app/      Next.js dashboard (served by the API in the container)
+Dockerfile         builds the dashboard, then runs everything in one container
 data/              the match as CSV and JSON
 ```
