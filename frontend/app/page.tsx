@@ -14,7 +14,7 @@ type Event = {
 type Stats = {
   goals: number; passes: number; completed_passes: number; pass_accuracy: number | null;
   shots: number; xg: number; pressures: number; tackles_won: number;
-  turnovers: number; event_share: number;
+  turnovers: number; event_share: number; possession: number | null; recoveries: number; final_third_entries: number;
 };
 type Insight = { title: string; body: string; kind: string; evidence_ids: string[]; window: string };
 type MatchState = {
@@ -49,7 +49,8 @@ function takeSource(c: Claim): string {
 const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
 
 const descriptions: Record<string, string> = {
-  pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Turnover",
+  pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Lost the ball",
+  interception: "Interception", foul: "Foul",
 };
 
 const FILTERS: { id: Filter; label: string }[] = [
@@ -64,7 +65,8 @@ const FILTERS: { id: Filter; label: string }[] = [
 function eventLabel(event: Event): string {
   if (event.is_goal) return "Goal";
   if (event.type === "pass") return `${event.outcome === "complete" ? "Completed" : "Missed"} pass`;
-  if (event.type === "shot") return `Shot ${event.outcome}`;
+  if (event.type === "shot") return `Shot ${event.outcome.replace("_", " ")}`;
+  if (event.type === "tackle") return `Tackle ${event.outcome}`;
   return descriptions[event.type] ?? event.type;
 }
 
@@ -167,12 +169,14 @@ export default function Home() {
   const flashColor = flash ? (flash.side === "home" ? "var(--home)" : "var(--away)") : undefined;
 
   const rows: { label: string; h?: number | null; a?: number | null; unit?: string }[] = [
+    { label: "Possession", h: st?.home.possession, a: st?.away.possession, unit: "%" },
     { label: "Shots", h: st?.home.shots, a: st?.away.shots },
     { label: "Synthetic xG", h: st?.home.xg, a: st?.away.xg },
     { label: "Completed passes", h: st?.home.completed_passes, a: st?.away.completed_passes },
     { label: "Pass accuracy", h: st?.home.pass_accuracy, a: st?.away.pass_accuracy, unit: "%" },
     { label: "Pressure events", h: st?.home.pressures, a: st?.away.pressures },
-    { label: "Event share (not possession)", h: st?.home.event_share, a: st?.away.event_share, unit: "%" },
+    { label: "Final-third entries", h: st?.home.final_third_entries, a: st?.away.final_third_entries },
+    { label: "Ball recoveries", h: st?.home.recoveries, a: st?.away.recoveries },
   ];
 
   return (

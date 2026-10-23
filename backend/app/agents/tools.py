@@ -1,11 +1,11 @@
 """Deterministic tools the agents call. Numbers only ever come from here, never from a model."""
 
-from ..analysis import _team_stats
+from ..analysis import LOST_BALL, RECOVERY, _team_stats, final_third
 from ..synthetic import EVENTS, TEAMS
-from .models import METRIC_EVIDENCE, METRIC_LABELS, Claim
+from .models import METRIC_LABELS, Claim
 
 EVENTS_BY_ID = {e["id"]: e for e in EVENTS}
-TOLERANCE = {"xg": 0.05, "pass_accuracy": 2.0}
+TOLERANCE = {"xg": 0.05, "pass_accuracy": 2.0, "possession": 3.0}
 MIN_PASSES_FOR_ACCURACY = 4
 MIN_SAMPLE = 3  # combined events (or shots, for xG) needed before a comparison means anything
 
@@ -23,12 +23,29 @@ def window_stats(team: str, start: int, end: int) -> dict:
     return _team_stats(window_events(start, end), team)
 
 
+def supports(e: dict, team: str, metric: str) -> bool:
+    """Whether an event is evidence for team's number on this metric."""
+    if metric == "turnovers":
+        return e["possession_team"] == team and e["possession_end"] in LOST_BALL
+    if e["team"] != team:
+        return False
+    if metric in ("goals", "shots", "xg"):
+        return e["type"] == "shot" and (e["is_goal"] or metric != "goals")
+    if metric == "possession":
+        return e["type"] == "pass" and e["outcome"] == "complete"
+    if metric == "final_third_entries":
+        return final_third(e)
+    if metric == "recoveries":
+        return e["type"] in RECOVERY and e["outcome"] == "won"
+    if metric == "tackles_won":
+        return e["type"] == "tackle" and e["outcome"] == "won"
+    if metric == "pressures":
+        return e["type"] == "pressure"
+    return e["type"] == "pass"
+
+
 def pick_evidence(team: str, metric: str, start: int, end: int, limit: int = 4) -> list[str]:
-    kind = METRIC_EVIDENCE[metric]
-    events = [e for e in window_events(start, end) if e["team"] == team and e["type"] == kind]
-    if metric == "goals":
-        events = [e for e in events if e["is_goal"]]
-    return [e["id"] for e in events][-limit:]
+    return [e["id"] for e in window_events(start, end) if supports(e, team, metric)][-limit:]
 
 
 def _metric(team: str, metric: str, start: int, end: int) -> float | None:
@@ -43,7 +60,7 @@ def _fmt(metric: str, value: float | None) -> str:
         return "n/a"
     if metric == "xg":
         return f"{value:.2f}"
-    if metric == "pass_accuracy":
+    if metric in ("pass_accuracy", "possession"):
         return f"{value:.1f}%"
     return f"{value:g}"
 
@@ -60,7 +77,7 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
         claim.verdict, claim.reason = kind, reason
         return claim
 
-    if (claim.team not in TEAMS or claim.metric not in METRIC_EVIDENCE
+    if (claim.team not in TEAMS or claim.metric not in METRIC_LABELS
             or claim.relation not in ("more", "less") or claim.compare not in ("opponent", "previous")):
         return verdict("rejected", "Malformed claim: unknown team, metric, relation or comparison.")
     if claim.end > minute:
@@ -109,9 +126,8 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
         notes.append(f"stated {_fmt(claim.metric, claim.value)}, log shows {_fmt(claim.metric, actual)}")
         claim.value = actual
 
-    kind = METRIC_EVIDENCE[claim.metric]
     valid = [i for i in claim.evidence_ids
-             if (e := EVENTS_BY_ID.get(i)) and e["team"] == claim.team and e["type"] == kind
+             if (e := EVENTS_BY_ID.get(i)) and supports(e, claim.team, claim.metric)
              and claim.start <= e["minute"] <= claim.end]
     if len(valid) < len(claim.evidence_ids):
         notes.append(f"dropped {len(claim.evidence_ids) - len(valid)} evidence ID(s) that don't support it")

@@ -62,4 +62,4 @@ If both are set, Foundry is used; set `$env:MATCHMIND_PROVIDER='nebius'` to choo
 
 ## Data and limitations
 
-All clubs, players and events are fictional and generated from a fixed seed. No real Premier League data or footage is used. xG values are illustrative, not a trained model, and event share is not possession time.
+All clubs, players and events are fictional. `backend/app/synthetic.py` simulates a full match possession by possession from a fixed seed: about 1,350 events over 300 possessions, with 11-player squads, passes with start and end positions, pressing that forces errors, interceptions, tackles, shots with xG, and time-based possession. The match follows a story (Riverside's spell before half-time, Northbridge's pressing spell after the hour) so the agents have something real to find. No real Premier League data or footage is used, and xG values are illustrative, not a trained model.

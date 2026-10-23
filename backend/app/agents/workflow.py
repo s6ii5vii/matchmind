@@ -36,9 +36,10 @@ class Stats(Executor):
         start, end = job.window
         job.stats = {side: window_stats(side, start, end) for side in TEAMS}
         h, a = job.stats["home"], job.stats["away"]
-        job.log("Stats", "Computed window stats from the event log",
-                f"Shots {h['shots']}-{a['shots']}, pressures {h['pressures']}-{a['pressures']}, "
-                f"turnovers {h['turnovers']}-{a['turnovers']} ({len(window_events(start, end))} events).", "ok")
+        job.log("Stats", "Computed the spell's numbers from the event log",
+                f"Possession {h['possession'] or 0:.0f}%-{a['possession'] or 0:.0f}%, shots {h['shots']}-{a['shots']}, "
+                f"pressures {h['pressures']}-{a['pressures']}, recoveries {h['recoveries']}-{a['recoveries']} "
+                f"({len(window_events(start, end))} events).", "ok")
         await ctx.send_message(job)
 
 
@@ -50,7 +51,8 @@ class Pundit(Executor):
     async def _takes(self, job: Job, rejected) -> list:
         if job.needs_revision:
             return (await llm.propose(self.client, job, rejected)) if self.client else offline.revise(rejected)
-        return (await llm.propose(self.client, job)) if self.client else offline.propose(job, limit=3)
+        covered = tuple(c.metric for c in job.claims if c.premise)  # the question's own topic is already checked
+        return (await llm.propose(self.client, job)) if self.client else offline.propose(job, limit=3, skip=covered)
 
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:

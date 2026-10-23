@@ -7,11 +7,36 @@ Model-written narration lives in the agent workflow (app/agents).
 from .synthetic import EVENTS, TEAMS
 
 
+LOST_BALL = {"intercepted", "pass out of play", "dispossessed", "tackled", "miscontrol"}
+RECOVERY = {"interception", "tackle"}
+
+
+def possession_seconds(events: list[dict]) -> dict:
+    """Seconds on the ball per team, from the simulated possessions that start in these events."""
+    spans: dict[int, list] = {}
+    for e in events:
+        span = spans.setdefault(e["possession"], [e["possession_team"], e["t"], e["t"]])
+        span[1], span[2] = min(span[1], e["t"]), max(span[2], e["t"])
+    seconds = {"home": 0, "away": 0}
+    for team, first, last in spans.values():
+        seconds[team] += last - first + 3
+    return seconds
+
+
+def final_third(e: dict) -> bool:
+    """A completed pass into the attacking third (home attack towards x=100, away towards x=0)."""
+    if e["type"] != "pass" or e["outcome"] != "complete" or e["end_x"] is None:
+        return False
+    return e["end_x"] > 66.7 and e["x"] <= 66.7 if e["team"] == "home" else e["end_x"] < 33.3 and e["x"] >= 33.3
+
+
 def _team_stats(events: list[dict], team: str) -> dict:
     own = [e for e in events if e["team"] == team]
     passes = [e for e in own if e["type"] == "pass"]
     completed = sum(e["outcome"] == "complete" for e in passes)
     shots = [e for e in own if e["type"] == "shot"]
+    seconds = possession_seconds(events)
+    total = sum(seconds.values())
     return {
         "goals": sum(e["is_goal"] for e in own),
         "passes": len(passes),
@@ -21,7 +46,10 @@ def _team_stats(events: list[dict], team: str) -> dict:
         "xg": round(sum(e["xg"] or 0 for e in shots), 2),
         "pressures": sum(e["type"] == "pressure" for e in own),
         "tackles_won": sum(e["type"] == "tackle" and e["outcome"] == "won" for e in own),
-        "turnovers": sum(e["type"] == "turnover" for e in own),
+        "recoveries": sum(e["type"] in RECOVERY and e["outcome"] == "won" for e in own),
+        "turnovers": sum(e["possession_end"] in LOST_BALL for e in events if e["possession_team"] == team),
+        "final_third_entries": sum(final_third(e) for e in passes),
+        "possession": round(100 * seconds[team] / total, 1) if total else None,
         "event_share": round(100 * len(own) / len(events), 1) if events else 0,
     }
 
@@ -113,5 +141,5 @@ def build_state(minute: int = 0, mode: str = "fan", focus: str = "home") -> dict
         "focus": focus,
         "observed_event_count": len(observed),
         "recent_event_count": len(recent),
-        "method": "Deterministic calculations over synthetic events only. Event share is not possession time.",
+        "method": "Deterministic calculations over a simulated, fictional match. Possession is time on the ball.",
     }

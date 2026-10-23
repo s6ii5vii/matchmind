@@ -12,38 +12,44 @@ from .models import METRIC_LABELS, Claim, Job
 from .tools import other, pick_evidence, window_stats
 
 KEYWORDS = {
-    "press": ["pressures", "turnovers"], "pressur": ["pressures", "turnovers"],
+    "press": ["pressures", "recoveries"], "pressur": ["pressures", "recoveries"], "win the ball": ["recoveries"],
     "tackl": ["tackles_won"], "shot": ["shots", "xg"], "chance": ["xg", "shots"], "xg": ["xg", "shots"],
-    "attack": ["shots", "xg"], "dangerous": ["xg", "shots"], "pass": ["pass_accuracy"],
-    "control": ["pass_accuracy", "pressures"], "possession": ["pass_accuracy"], "rhythm": ["pass_accuracy"],
-    "turnover": ["turnovers"], "lose the ball": ["turnovers"], "lost the ball": ["turnovers"],
-    "giving the ball": ["turnovers"], "momentum": ["shots", "pressures"], "goal": ["xg", "shots"],
+    "attack": ["final_third_entries", "xg"], "dangerous": ["xg", "final_third_entries"], "pass": ["pass_accuracy"],
+    "control": ["possession", "pass_accuracy"], "possession": ["possession"], "the ball": ["possession"],
+    "rhythm": ["pass_accuracy"], "turnover": ["turnovers"], "lose the ball": ["turnovers"],
+    "lost the ball": ["turnovers"], "giving the ball": ["turnovers"], "momentum": ["final_third_entries", "pressures"],
+    "goal": ["xg", "shots"],
 }
 ALIASES = {"home": ("northbridge", "nbr"), "away": ("riverside", "rsu")}
 
 # what a pundit talks about: (metric, compare, whose: focus|opponent|either)
 TOPICS = [
+    ("possession", "opponent", "either"),
     ("pressures", "opponent", "either"),
+    ("recoveries", "opponent", "either"),
     ("xg", "opponent", "either"),
+    ("final_third_entries", "previous", "focus"),
+    ("pass_accuracy", "previous", "opponent"),
     ("shots", "previous", "focus"),
-    ("pass_accuracy", "previous", "focus"),
     ("turnovers", "previous", "opponent"),
-    ("tackles_won", "opponent", "either"),
 ]
 EYE_TEST_MINUTES = 5
 
 # assumptions a question can carry: (trigger phrases, metric, relation, compare, take)
 PREMISES = [
-    (("lose control", "lost control", "losing control"), "passes", "less", "opponent",
+    (("lose control", "lost control", "losing control"), "possession", "less", "opponent",
      "{T} lost control of the ball"),
+    (("press work", "press is work", "pressing work", "press pay", "pressing pay"), "recoveries", "more", "opponent",
+     "{T}'s press is winning the ball back"),
     (("press",), "pressures", "more", "opponent", "{T} are pressing harder than {O}"),
-    (("struggl", "no chances", "can't create"), "shots", "less", "previous", "{T} are struggling to create"),
+    (("struggl", "no chances", "can't create"), "final_third_entries", "less", "previous",
+     "{T} are struggling to get forward"),
     (("dangerous", "better chances", "creating chances"), "xg", "more", "opponent",
      "{T} are creating the better chances"),
     (("sloppy", "careless", "giving the ball away", "giving it away"), "turnovers", "more", "previous",
      "{T} are giving the ball away more"),
     (("fading", "tired", "dropped off", "running out"), "pressures", "less", "previous", "{T} are fading"),
-    (("dominat", "on top", "in control", "ran the show", "running the show"), "passes", "more", "opponent",
+    (("dominat", "on top", "in control", "ran the show", "running the show"), "possession", "more", "opponent",
      "{T} are on top"),
 ]
 
@@ -56,7 +62,11 @@ PHRASES = {
     ("pass_accuracy", "more"): "{T} are passing it better", ("pass_accuracy", "less"): "{T} are getting sloppy on the ball",
     ("turnovers", "more"): "{T} keep giving the ball away", ("turnovers", "less"): "{T} are looking after the ball",
     ("tackles_won", "more"): "{T} are winning the battles", ("tackles_won", "less"): "{T} are losing the battles",
-    ("passes", "more"): "{T} have the ball", ("passes", "less"): "{T} can't get on the ball",
+    ("passes", "more"): "{T} are seeing more of the ball", ("passes", "less"): "{T} can't get on the ball",
+    ("possession", "more"): "{T} have taken control of the ball", ("possession", "less"): "{T} can't keep the ball",
+    ("recoveries", "more"): "{T} keep winning the ball back", ("recoveries", "less"): "{T} can't win the ball back",
+    ("final_third_entries", "more"): "{T} are getting into the final third more",
+    ("final_third_entries", "less"): "{T} can't get into the final third",
     ("goals", "more"): "{T} are scoring more", ("goals", "less"): "{T} are scoring less",
     ("completed_passes", "more"): "{T} are completing more passes",
     ("completed_passes", "less"): "{T} are completing fewer passes",
@@ -91,6 +101,8 @@ def plan(job: Job) -> None:
         job.log("Orchestrator", "Clamped window",
                 f"Question asks about minute {end}, but only {job.minute} minutes have been played.", "warn")
         end = job.minute
+    if start > end:  # the whole period asked about is still to come
+        start = max(1, end - 9)
     job.window = (start, end)
 
     seen = []
@@ -138,10 +150,11 @@ def _eye_test(team: str, metric: str, compare: str, end: int) -> tuple[str, str]
     return team, "more" if a > b else "less"
 
 
-def propose(job: Job, limit: int = 4) -> list[Claim]:
+def propose(job: Job, limit: int = 4, skip: tuple[str, ...] = ()) -> list[Claim]:
     focus, opp = job.focus, other(job.focus)
     start, end = job.window
-    ranked = sorted(TOPICS, key=lambda t: (t[0] not in job.priorities, TOPICS.index(t)))
+    ranked = sorted((t for t in TOPICS if t[0] not in skip),
+                    key=lambda t: (t[0] not in job.priorities, TOPICS.index(t)))
     claims = []
     for metric, compare, whose in ranked:
         read = _eye_test(opp if whose == "opponent" else focus, metric, compare, end)

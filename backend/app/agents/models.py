@@ -2,16 +2,12 @@
 
 from dataclasses import asdict, dataclass, field
 
-# metric -> event type that can serve as evidence for it
-METRIC_EVIDENCE = {
-    "goals": "shot", "shots": "shot", "xg": "shot",
-    "passes": "pass", "completed_passes": "pass", "pass_accuracy": "pass",
-    "pressures": "pressure", "tackles_won": "tackle", "turnovers": "turnover",
-}
 METRIC_LABELS = {
     "goals": "goals", "shots": "shots", "xg": "synthetic xG",
     "passes": "passes", "completed_passes": "completed passes", "pass_accuracy": "pass accuracy",
-    "pressures": "pressure events", "tackles_won": "tackles won", "turnovers": "turnovers",
+    "possession": "possession", "final_third_entries": "final-third entries",
+    "pressures": "pressure events", "recoveries": "ball recoveries", "tackles_won": "tackles won",
+    "turnovers": "times losing the ball",
 }
 
 

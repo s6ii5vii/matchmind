@@ -62,20 +62,45 @@ def model_client():
 
 
 def make_pundit_tools(minute: int):
-    """A viewer's-eye view: recent events only, no aggregated stats, nothing after the current minute."""
+    """A viewer's-eye view: recent moves and events only, no aggregated stats, nothing after the current minute."""
+    def recent_moves(team: str = "", last_minutes: int = 5) -> list[dict]:
+        """The passing moves a viewer just watched (optionally one team, 'home' or 'away'): who had the ball,
+        how many passes, where the move started and reached, and how it ended."""
+        moves: dict[int, list[dict]] = {}
+        for e in window_events(max(1, minute - last_minutes + 1), minute):
+            moves.setdefault(e["possession"], []).append(e)
+        summary = []
+        for events in moves.values():
+            side = events[0]["possession_team"]
+            if team and side != team:
+                continue
+            own = [e for e in events if e["team"] == side]
+            ending = next((e["possession_end"] for e in reversed(events) if e["possession_end"]), "still going")
+            summary.append({
+                "team": side, "from": events[0]["clock"], "passes": sum(e["type"] == "pass" for e in own),
+                "started_in": own[0]["zone"] + " third" if own else "n/a",
+                "reached": max((e["zone"] for e in own), key=("defensive", "middle", "attacking").index) + " third"
+                if own else "n/a",
+                "pressed_times": sum(e["type"] == "pressure" for e in events), "ended": ending,
+                "event_ids": [e["id"] for e in events][-4:],
+            })
+        return summary[-12:]
+
     def recent_events(team: str, event_type: str = "", last_minutes: int = 5, limit: int = 8) -> list[dict]:
-        """Events a viewer just watched for team ('home' or 'away'), optionally one type
-        (pass, pressure, tackle, shot, turnover), from the last few minutes."""
+        """Individual events a viewer just watched for team ('home' or 'away'), optionally one type
+        (pass, pressure, tackle, interception, shot, turnover, foul)."""
         events = [e for e in window_events(max(1, minute - last_minutes + 1), minute)
                   if e["team"] == team and (not event_type or e["type"] == event_type)]
-        return [{k: e[k] for k in ("id", "clock", "player", "type", "outcome")} for e in events[-limit:]]
+        keys = ("id", "clock", "player", "position", "type", "outcome", "zone", "receiver", "under_pressure")
+        return [{k: e[k] for k in keys} for e in events[-limit:]]
 
-    return [recent_events]
+    return [recent_moves, recent_events]
 
 
 PUNDIT_INSTRUCTIONS = f"""You are the Pundit agent in MatchMind, a TV pundit watching a fictional football match
 (home = {TEAMS['home']['name']}, away = {TEAMS['away']['name']}). You only see what a viewer sees: the score
-and the events of the last few minutes (use recent_events). You do NOT have the stats. Read the game honestly and
+and the last few minutes of play (use recent_moves for the passing moves, recent_events for detail). You do NOT
+have the stats. Read the game honestly and
 give up to 3 confident, punchy takes, the way a good pundit would say them on air. You'll usually be right, but
 you only saw the last few minutes and you're talking about the whole spell, so don't hedge: commit to your read.
 Each take MUST map to a comparison a Skeptic can recompute: metric in {sorted(METRIC_LABELS)}; compare
@@ -104,6 +129,9 @@ async def propose(client, job: Job, rejected: list[Claim] | None = None) -> list
     prompt = (f"Minute {job.minute}. Score: {TEAMS['home']['name']} {score['home']}-{score['away']} "
               f"{TEAMS['away']['name']}. Talk about minutes {start}-{end}, following {TEAMS[job.focus]['name']} "
               f"({job.focus}). Viewer question: {job.question or 'none'}.")
+    covered = [c.metric for c in job.claims if c.premise]
+    if covered:
+        prompt += f" The question's own assumption ({covered[0]}) is already being checked; talk about something else."
     if rejected:
         prompt += (" The Skeptic busted these takes with data. Give a better take for each, or drop it: " +
                    json.dumps([{"id": c.id, "take": c.text, "data": c.finding or c.reason} for c in rejected]))

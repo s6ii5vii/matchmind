@@ -41,7 +41,7 @@ class SkepticTests(unittest.TestCase):
         self.assertTrue(result.evidence_ids)
 
     def test_tiny_samples_are_unproven_not_busted(self):
-        tiny = claim(start=1, end=3, value=window_stats("home", 1, 3)["pressures"])
+        tiny = claim(metric="shots", start=1, end=3, value=window_stats("home", 1, 3)["shots"])
         self.assertEqual(verify_claim(tiny, 3).verdict, "unproven")
 
     def test_finding_states_what_the_data_shows(self):
@@ -64,7 +64,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(result["narrative"])
 
     def test_skeptic_sends_busted_takes_back_for_revision(self):
-        result = self.run_job(30, "analyst", "away")
+        result = self.run_job(60, "analyst", "home")
         self.assertTrue(any(c["verdict"] == "rejected" for c in result["claims"]))
         self.assertEqual(result["rounds"], 1)
         self.assertTrue(any(c["revision_of"] for c in result["claims"]))
@@ -105,7 +105,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_question_about_future_is_clamped(self):
         result = self.run_job(30, "fan", "home", "What happened in the second half?")
-        self.assertLessEqual(result["window"][1], 30)
+        start, end = result["window"]
+        self.assertLessEqual(start, end)
+        self.assertLessEqual(end, 30)
 
     def test_broken_model_falls_back_to_rules(self):
         result = self.run_job(70, "fan", "home", client=object())
