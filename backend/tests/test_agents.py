@@ -119,6 +119,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(result["narrative"])
 
 
+class PunditWordingTests(unittest.TestCase):
+    def test_takes_quoting_numbers_are_reworded(self):
+        from app.agents.llm import _take_text
+        raw = {"team": "home", "metric": "pressures", "relation": "more",
+               "text": "Northbridge's press was relentless - 17 pressures versus Riverside's 8."}
+        self.assertNotRegex(_take_text(raw), r"\d")
+        self.assertIn("Northbridge City", _take_text(raw))
+        self.assertEqual(_take_text({**raw, "text": "Northbridge are all over them"}), "Northbridge are all over them")
+
+
 class GroundingGuardTests(unittest.TestCase):
     def test_flags_invented_numbers(self):
         job = Job(minute=70, mode="fan", focus="home", window=(61, 70))
@@ -160,27 +170,42 @@ class ProviderTests(unittest.TestCase):
         self.assertIsNotNone(client)
 
 
-class PlayerImpactTests(unittest.TestCase):
-    def test_impact_only_uses_events_so_far(self):
+class PlayerRatingTests(unittest.TestCase):
+    def test_rating_only_uses_events_so_far(self):
         before = {p["name"]: p for p in ranking(71)}
         after = {p["name"]: p for p in ranking(73)}
         self.assertEqual(before["A. Okafor"]["counts"]["goals"], 0)  # scores at 72:36
         self.assertEqual(after["A. Okafor"]["counts"]["goals"], 1)
+        self.assertGreater(after["A. Okafor"]["rating"], before["A. Okafor"]["rating"])
 
-    def test_defending_earns_impact_not_just_goals(self):
+    def test_ratings_start_at_six_and_stay_out_of_ten(self):
+        self.assertTrue(all(p["rating"] == 6.0 for p in ranking(0)))
+        full_time = ranking(90)
+        self.assertTrue(all(3.0 <= p["rating"] <= 10.0 for p in full_time))
+        self.assertGreater(full_time[0]["rating"] - full_time[-1]["rating"], 1.5)
+
+    def test_every_action_is_worth_between_minus_ten_and_ten(self):
+        for p in ranking(90):
+            for m in p["moments"]:
+                self.assertLessEqual(abs(m["points"]), 10)
+
+    def test_chances_are_shared_and_mistakes_are_charged(self):
         players = ranking(90)
-        defenders = [p for p in players if p["position"] == "DF"]
-        self.assertTrue(any(p["values"]["defending"] > 50 for p in defenders))
-        scorers_without_much_else = [p for p in players if p["counts"]["goals"]]
-        best_defender = max(defenders, key=lambda p: p["impact"])
-        self.assertGreater(best_defender["impact"], min(p["impact"] for p in scorers_without_much_else) * 0.8)
+        self.assertTrue(any(p["counts"]["chances_involved"] and not p["counts"]["shots"] for p in players))
+        self.assertTrue(any(p["counts"]["chances_after_loss"] and p["values"]["costly"] < 0 for p in players))
 
-    def test_compare_explains_the_biggest_edge(self):
-        result = compare("K. Mensah", "S. Walker", 90)
-        self.assertIn(result["winner"], ("K. Mensah", "S. Walker", None))
-        self.assertIn("impact points", result["verdict"])
-        simple = compare("K. Mensah", "S. Walker", 90, "simple")["verdict"]
-        self.assertNotIn("xG", simple)
+    def test_a_defender_can_rate_as_well_as_a_goalscorer(self):
+        players = ranking(90)
+        best_defender = max((p for p in players if p["position"] == "DF"), key=lambda p: p["rating"])
+        scorers = [p for p in players if p["counts"]["goals"]]
+        self.assertGreaterEqual(best_defender["rating"], min(p["rating"] for p in scorers))
+
+    def test_compare_explains_the_difference(self):
+        result = compare("A. Okafor", "I. Brown", 90)
+        self.assertEqual(result["winner"], "A. Okafor")
+        self.assertIn("/10", result["verdict"])
+        self.assertIn("lost the ball before", result["verdict"])
+        self.assertNotIn("xG", compare("A. Okafor", "I. Brown", 90, "simple")["verdict"])
 
 
 class ApiTests(unittest.TestCase):

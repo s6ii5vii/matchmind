@@ -292,6 +292,18 @@ footer { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wr
 .leaders button { border: 1px solid var(--line-strong); background: transparent; color: var(--ink); padding: 6px 12px; border-radius: 999px; font: 500 12px var(--sans); }
 .leaders button small { color: var(--muted); margin-left: 4px; }
 .leaders button:hover { border-color: var(--accent); }
+.ratings { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 28px 6px; }
+.rating-card { display: flex; gap: 18px; align-items: flex-start; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.rating-card.best { border-color: var(--accent-text); }
+.rating-num { font: 400 54px/1 var(--serif); letter-spacing: -.03em; }
+.rating-card.a .rating-num { color: var(--home); }
+.rating-card.b .rating-num { color: var(--away); }
+.rating-num small { font-size: 16px; color: var(--muted); margin-left: 2px; }
+.rating-card strong { display: block; font: 500 16px var(--sans); }
+.rating-card span { display: block; margin-top: 2px; font: 400 11px var(--mono); letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+.rating-card p { margin: 8px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.leaders button b { margin-left: 4px; color: var(--accent-text); font-weight: 600; }
+@media (max-width: 640px) { .ratings { grid-template-columns: 1fr; margin-left: 18px; margin-right: 18px; } }
 @media (max-width: 640px) {
   .duel-pickers, .moments { grid-template-columns: 1fr; margin-left: 18px; margin-right: 18px; }
   .duel-verdict { margin: 0 18px 8px !important; }

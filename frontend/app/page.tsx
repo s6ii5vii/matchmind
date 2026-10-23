@@ -30,16 +30,17 @@ type Claim = {
   verdict: Verdict; reason: string; finding: string; premise: boolean; plain: string; plain_finding: string;
 };
 type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
-type Category = "scoring" | "creating" | "progression" | "defending" | "ball_security";
+type Category = "chances" | "build_up" | "defending" | "ball_security" | "costly";
 type Player = {
   name: string; team: Side; team_name: string; number: number; position: string; impact: number;
+  rating: number; tag: string | null; summary?: string;
   values: Record<Category, number>; counts: Record<string, number>;
   moments: { event_id: string; what: string; points: number }[];
 };
 type Duel = { a: Player; b: Player; winner: string | null; verdict: string; categories: { key: Category; label: string }[] };
 const PLAIN_CATEGORY: Record<Category, string> = {
-  scoring: "Scoring", creating: "Setting up teammates", progression: "Moving the ball towards goal",
-  defending: "Winning the ball back", ball_security: "Not losing the ball",
+  chances: "Helping create chances", build_up: "Moving the ball towards goal",
+  defending: "Winning the ball back", ball_security: "Not losing the ball", costly: "Mistakes that led to chances",
 };
 const POSITION: Record<string, string> = { GK: "Goalkeeper", DF: "Defender", MF: "Midfielder", FW: "Forward" };
 
@@ -449,7 +450,7 @@ export default function Home() {
       <section className="surface duel">
         <div className="panel-head">
           <h2><span className="section-numeral">02</span>Player duel</h2>
-          <span className="panel-meta">Impact so far · every action counts, not just goals</span>
+          <span className="panel-meta">Rating out of 10 · who drove the good moments, who caused the bad ones</span>
         </div>
         <div className="duel-pickers">
           {(["a", "b"] as const).map((slot, i) => (
@@ -469,15 +470,28 @@ export default function Home() {
         </div>
         {duel && (
           <>
-            <div className="recap-box ai duel-verdict"><b>{duel.winner ? `${duel.winner.toUpperCase()} · MORE IMPACT` : "TOO CLOSE TO CALL"}</b><p>{duel.verdict}</p></div>
+            <div className="recap-box ai duel-verdict"><b>{duel.winner ? `${duel.winner.toUpperCase()} · MORE HELPFUL` : "TOO CLOSE TO CALL"}</b><p>{duel.verdict}</p></div>
+            <div className="ratings">
+              {[duel.a, duel.b].map((p, i) => (
+                <div key={p.name} className={`rating-card ${i === 0 ? "a" : "b"} ${duel.winner === p.name ? "best" : ""}`}>
+                  <div className="rating-num">{p.rating.toFixed(1)}<small>/10</small></div>
+                  <div>
+                    <strong>{p.name}</strong>
+                    <span>{POSITION[p.position]} · {p.team_name}{p.tag ? ` · ${p.tag}` : ""}</span>
+                    {p.summary && <p>{p.summary[0].toUpperCase() + p.summary.slice(1)}.</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
             <div className="duel-board">
               <div className="stat-heading"><span>{duel.a.name}</span><span>IMPACT POINTS</span><span>{duel.b.name}</span></div>
               {[...duel.categories.map((c) => ({ label: mode === "simple" ? PLAIN_CATEGORY[c.key] : c.label, h: duel.a.values[c.key], a: duel.b.values[c.key] })),
-                { label: "Total impact", h: duel.a.impact, a: duel.b.impact }].map((r) => {
-                const h = Math.max(0, r.h), a = Math.max(0, r.a), total = h + a;
+                { label: "Total impact points", h: duel.a.impact, a: duel.b.impact }].map((r) => {
+                // bigger bar = better: shift so the worse value sits at zero (handles negative points)
+                const low = Math.min(r.h, r.a, 0), h = r.h - low, a = r.a - low, total = h + a;
                 const share = total > 0 ? (h / total) * 100 : 50;
                 return (
-                  <div className={`stat-row ${r.label === "Total impact" ? "total" : ""}`} key={r.label}>
+                  <div className={`stat-row ${r.label === "Total impact points" ? "total" : ""}`} key={r.label}>
                     <div className="stat-nums">
                       <strong className={r.h > r.a ? "lead" : ""}>{r.h}</strong>
                       <span>{r.label}</span>
@@ -503,10 +517,10 @@ export default function Home() {
           </>
         )}
         <div className="leaders">
-          <b>MOST IMPACT SO FAR</b>
+          <b>TOP RATED SO FAR</b>
           {players.slice(0, 5).map((p, i) => (
             <button key={p.name} onClick={() => setPick({ ...pick, a: p.name === pick.b ? pick.a : p.name })}>
-              {i + 1}. {p.name} <small>{POSITION[p.position]} · {p.impact}</small>
+              {i + 1}. {p.name} <b>{p.rating.toFixed(1)}</b> <small>{p.tag ?? POSITION[p.position]}</small>
             </button>
           ))}
         </div>
