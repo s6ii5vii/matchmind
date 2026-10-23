@@ -1,4 +1,4 @@
-"""Rule-based agent behaviour, used when no Microsoft Foundry model is configured.
+"""Rule-based agent behaviour, used when no model provider is configured.
 
 The Tactics hypotheses here are deliberately eager: they are drafted without checking
 whether they hold, exactly like a model's would be, and the Skeptic decides.

@@ -1,7 +1,7 @@
 """Auditable match aggregation and explainability engine.
 
 These are deterministic computations and templates, NOT LLM-generated content.
-The optional Foundry-generated narrative lives in the separate /api/narrate route.
+Model-written narration lives in the agent workflow (app/agents).
 """
 
 from .synthetic import EVENTS, TEAMS

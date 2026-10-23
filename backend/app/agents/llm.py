@@ -1,7 +1,8 @@
-"""Microsoft Foundry model-backed agents (Microsoft Agent Framework `Agent`).
+"""Model-backed agents (Microsoft Agent Framework `Agent`).
 
-Used only when AZURE_OPENAI_* is configured. Models draft claims and prose; every number
-they produce is re-checked by deterministic code before it reaches a viewer.
+Used only when a model provider is configured: Microsoft Foundry (AZURE_OPENAI_*) or any
+OpenAI-compatible endpoint such as Nebius Token Factory (NEBIUS_API_KEY). Models draft claims
+and prose; every number they produce is re-checked by deterministic code before a viewer sees it.
 """
 
 import json
@@ -14,21 +15,44 @@ from ..synthetic import TEAMS
 from .models import METRIC_LABELS, Claim, Job
 from .tools import EVENTS_BY_ID, window_events, window_stats
 
-API_VERSION = "2024-10-21"
+API_VERSION = "2025-04-01-preview"  # GPT-5 family needs 2025-04-01-preview or later
+NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
+NEBIUS_DEFAULT_MODEL = "openai/gpt-oss-120b"
+PROVIDERS = ("foundry", "nebius")
 
 
-def foundry_client():
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-    if not all((endpoint, api_key, deployment)):
-        return None
+def configured_provider() -> str:
+    """Which model provider to use: MATCHMIND_PROVIDER if set, else the first one configured."""
+    configured = {
+        "foundry": all(os.environ.get(k) for k in
+                       ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT")),
+        "nebius": bool(os.environ.get("NEBIUS_API_KEY")),
+    }
+    preferred = os.environ.get("MATCHMIND_PROVIDER", "").lower()
+    if configured.get(preferred):
+        return preferred
+    return next((p for p in PROVIDERS if configured[p]), "offline")
+
+
+def model_client():
+    """Return (Agent Framework chat client, provider name), or (None, "offline")."""
+    provider = configured_provider()
+    if provider == "offline":
+        return None, provider
     try:
         from agent_framework.openai import OpenAIChatCompletionClient
     except ModuleNotFoundError:
-        return None
-    return OpenAIChatCompletionClient(model=deployment, api_key=api_key, azure_endpoint=endpoint,
-                                      api_version=os.environ.get("AZURE_OPENAI_API_VERSION", API_VERSION))
+        return None, "offline"
+    if provider == "foundry":
+        client = OpenAIChatCompletionClient(
+            model=os.environ["AZURE_OPENAI_DEPLOYMENT"], api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/"),
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION", API_VERSION))
+    else:
+        client = OpenAIChatCompletionClient(
+            model=os.environ.get("NEBIUS_MODEL", NEBIUS_DEFAULT_MODEL), api_key=os.environ["NEBIUS_API_KEY"],
+            base_url=os.environ.get("NEBIUS_BASE_URL", NEBIUS_BASE_URL))
+    return client, provider
 
 
 def make_tools(minute: int):

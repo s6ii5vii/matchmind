@@ -12,7 +12,7 @@ Five agents run as a [Microsoft Agent Framework](https://github.com/microsoft/ag
 |---|---|
 | **Orchestrator** | Turns the viewer's question into a team, minute window and metrics to check |
 | **Stats** | Computes the numbers from the event log (code, no model) |
-| **Tactics** | Proposes tactical claims, each citing evidence events (Foundry model or rules) |
+| **Tactics** | Proposes tactical claims, each citing evidence events (AI model or rules) |
 | **Skeptic** | Recomputes every claim: verified, corrected or rejected. Sends rejections back to Tactics for revision |
 | **Narrator** | Explains only verified claims, for fans or analysts. A grounding guard blocks any number not in a verified claim |
 
@@ -39,9 +39,11 @@ Open http://localhost:3000, scrub to a minute, and ask the Agent room a question
 
 Tests (from `backend/`): `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`
 
-### Microsoft Foundry models (optional)
+### AI models (optional)
 
-Without credentials the agents run on rules and everything works offline. To let a Foundry chat model drive Tactics and Narrator, set these in the backend terminal and restart it:
+Without credentials the agents run on rules and everything works offline. To let a model drive Tactics and Narrator, copy `backend/.env.example` to `backend/.env`, fill in one provider, and restart the backend. (`.env` is git-ignored; you can also set the same names as environment variables.)
+
+**Microsoft Foundry** (Azure OpenAI deployment):
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT='https://YOUR-RESOURCE.openai.azure.com'
@@ -49,7 +51,14 @@ $env:AZURE_OPENAI_DEPLOYMENT='YOUR-DEPLOYMENT-NAME'
 $env:AZURE_OPENAI_API_KEY='YOUR_API_KEY'
 ```
 
-Never commit keys or `.env` files.
+**Nebius Token Factory** (OpenAI-compatible):
+
+```powershell
+$env:NEBIUS_API_KEY='YOUR_API_KEY'
+$env:NEBIUS_MODEL='openai/gpt-oss-120b'   # optional; any Token Factory model that supports tool calling
+```
+
+If both are set, Foundry is used; set `$env:MATCHMIND_PROVIDER='nebius'` to choose Nebius. Never commit keys or `.env` files.
 
 ## Data and limitations
 

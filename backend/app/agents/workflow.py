@@ -112,7 +112,7 @@ class Narrator(Executor):
                     job.log("Narrator", "Grounding guard blocked the model's draft",
                             f"Numbers not in any verified claim: {', '.join(bad)}. Using the template.", "reject")
                 elif text:
-                    job.narrative, job.narrative_source = text, "foundry"
+                    job.narrative, job.narrative_source = text, "model"
             except Exception as exc:
                 job.log("Narrator", "Model call failed, using the template", type(exc).__name__, "warn")
         job.log("Narrator", f"Wrote the {job.mode} explanation",
@@ -135,9 +135,9 @@ def build_workflow(client=None):
 
 
 async def run_analysis(minute: int, mode: str = "fan", focus: str = "home", question: str = "",
-                       client=None) -> dict:
+                       client=None, provider: str = "offline") -> dict:
     job = Job(minute=minute, mode=mode, focus=focus, question=question.strip()[:300],
-              engine="foundry" if client else "offline")
+              engine=provider if client else "offline")
     if minute < 1:
         job.log("Orchestrator", "Waiting for kick-off", "No events have happened yet.", "warn")
         job.narrative, job.narrative_source = "The match hasn't started yet.", "template"
