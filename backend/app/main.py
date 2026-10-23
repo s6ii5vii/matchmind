@@ -1,5 +1,12 @@
 """MatchMind MVP REST API. Start: uvicorn app.main:app --reload --port 8000"""
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# model keys live in backend/.env (git-ignored); real environment variables take precedence
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field

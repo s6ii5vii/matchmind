@@ -125,6 +125,7 @@ class ProviderTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    @mock.patch.dict(os.environ, {}, clear=True)  # rule-based agents, even if a local .env has keys
     def test_analyze_endpoint(self):
         res = TestClient(app).post("/api/analyze", json={"minute": 70, "mode": "fan", "focus": "home",
                                                          "question": "Who is pressing more?"})

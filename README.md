@@ -41,7 +41,7 @@ Tests (from `backend/`): `.\.venv\Scripts\python.exe -m unittest discover -s tes
 
 ### AI models (optional)
 
-Without credentials the agents run on rules and everything works offline. To let a model drive Tactics and Narrator, set one of these in the backend terminal and restart it.
+Without credentials the agents run on rules and everything works offline. To let a model drive Tactics and Narrator, copy `backend/.env.example` to `backend/.env`, fill in one provider, and restart the backend. (`.env` is git-ignored; you can also set the same names as environment variables.)
 
 **Microsoft Foundry** (Azure OpenAI deployment):
 
