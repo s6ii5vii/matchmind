@@ -42,7 +42,7 @@ def config():
         "teams": TEAMS,
         "total_events": len(EVENTS),
         "model_provider": configured_provider(),
-        "agents": ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"],
+        "agents": ["Orchestrator", "Stats", "Pundit", "Skeptic", "Narrator"],
     }
 
 
@@ -62,7 +62,7 @@ def state(
 
 @app.post("/api/analyze")
 async def analyze(body: AnalyzeRequest):
-    """Run the multi-agent workflow (Orchestrator, Stats, Tactics, Skeptic, Narrator).
+    """Run the multi-agent workflow (Orchestrator, Stats, Pundit, Skeptic, Narrator).
 
     Uses Microsoft Foundry or Nebius Token Factory models when configured, otherwise rule-based agents. Either way every
     claim is re-verified against the event log, and the full agent trace is returned.

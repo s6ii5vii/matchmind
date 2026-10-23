@@ -24,11 +24,11 @@ type MatchState = {
   observed_event_count: number; method: string;
 };
 type Flash = { side: Side; player: string; clock: string; key: number };
-type Verdict = "verified" | "corrected" | "rejected" | "pending";
+type Verdict = "verified" | "corrected" | "unproven" | "rejected" | "pending";
 type Claim = {
   id: string; team: Side; metric: string; start: number; end: number; value: number;
   text: string; evidence_ids: string[]; proposed_by: string; revision_of: string | null;
-  verdict: Verdict; reason: string;
+  verdict: Verdict; reason: string; finding: string; premise: boolean;
 };
 type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
 type Analysis = {
@@ -37,8 +37,15 @@ type Analysis = {
 };
 
 const ENGINE_LABEL: Record<Analysis["engine"], string> = { foundry: "Microsoft Foundry", nebius: "Nebius Token Factory", offline: "Rule-based" };
-const AGENTS = ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"];
-const VERDICT_LABEL: Record<Verdict, string> = { verified: "Verified", corrected: "Corrected", rejected: "Rejected", pending: "Pending" };
+const AGENTS = ["Orchestrator", "Stats", "Pundit", "Skeptic", "Narrator"];
+const VERDICT_LABEL: Record<Verdict, string> = {
+  verified: "✓ Holds up", corrected: "◐ Half-right", unproven: "? Not enough evidence", rejected: "✕ Doesn't hold up", pending: "Pending",
+};
+
+function takeSource(c: Claim): string {
+  if (c.premise) return "Your question assumes";
+  return c.revision_of ? "Pundit, rethinking" : "The pundit says";
+}
 const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
 
 const descriptions: Record<string, string> = {
@@ -322,7 +329,7 @@ export default function Home() {
         <div className="panel-head">
           <h2><span className="section-numeral">03</span>Agent room</h2>
           <span className="panel-meta">
-            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every claim checked"}
+            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every take checked"}
           </span>
         </div>
         <form className="ask" onSubmit={(e) => { e.preventDefault(); runAgents(question); }}>
@@ -341,40 +348,63 @@ export default function Home() {
         </div>
         {analysisStatus === "error" && <div className="recap-box error"><b>AGENTS UNAVAILABLE</b><p>Couldn&apos;t reach the analysis service. Check the backend is running.</p></div>}
         {!analysis && analysisStatus !== "error" && (
-          <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "Orchestrator → Stats → Tactics → Skeptic → Narrator. Ask a question or analyse this moment."}</div>
+          <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "A pundit gives the popular takes, a skeptic checks every one against the data. Ask a question or analyse this moment."}</div>
         )}
         {analysis && (
-          <div className="room-grid">
-            <div>
-              <div className="recap-box ai">
-                <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
-                <p>{analysis.narrative}</p>
-              </div>
-              <div className="claims">
-                {analysis.claims.map((c) => (
-                  <article key={c.id} className={`claim ${c.verdict}`}>
-                    <div className="claim-top">
+          <div className="room">
+            <div className="recap-box ai">
+              <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+              <p>{analysis.narrative}</p>
+            </div>
+            <div className="takes-summary">
+              <span><b>The take</b> vs <b>the data</b></span>
+              <span>
+                {(["verified", "corrected", "unproven", "rejected"] as Verdict[])
+                  .map((v) => [v, analysis.claims.filter((c) => c.verdict === v && !c.revision_of).length] as const)
+                  .filter(([, n]) => n > 0)
+                  .map(([v, n]) => `${n} ${VERDICT_LABEL[v].slice(2).toLowerCase()}`)
+                  .join(" · ")}
+              </span>
+            </div>
+            <div className="takes">
+              {analysis.claims.filter((c) => !c.revision_of || c.revision_of.includes(",")).map((c) => {
+                const rethink = analysis.claims.find((r) => r.revision_of === c.id);
+                return (
+                  <article key={c.id} className={`take ${c.verdict} ${c.premise ? "premise" : ""}`}>
+                    <div className="take-top">
+                      <span>{takeSource(c)}</span>
                       <span className={`verdict ${c.verdict}`}>{VERDICT_LABEL[c.verdict]}</span>
-                      <span>{c.id}{c.revision_of ? ` · revises ${c.revision_of}` : ""}</span>
                     </div>
-                    <h3>{c.text}</h3>
-                    <p>{c.reason}</p>
+                    <h3>&ldquo;{c.text}&rdquo;</h3>
+                    <div className="take-data">
+                      <b>THE DATA</b>
+                      <p>{c.finding || c.reason}</p>
+                      {c.verdict === "corrected" && <small>{c.reason}</small>}
+                    </div>
+                    {rethink && (
+                      <div className={`rethink ${rethink.verdict}`}>
+                        <b>RETHINK</b> &ldquo;{rethink.text}&rdquo; <span className={`verdict ${rethink.verdict}`}>{VERDICT_LABEL[rethink.verdict]}</span>
+                      </div>
+                    )}
                     {c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
                       <div className="evidence"><b>SOURCE EVENTS</b>{c.evidence_ids.join(" · ")}</div>
                     )}
                   </article>
-                ))}
-              </div>
+                );
+              })}
             </div>
-            <ol className="trace" aria-label="Agent trace">
-              {analysis.trace.map((t, i) => (
-                <li key={i} className={`trace-step ${t.status}`}>
-                  <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
-                  <strong>{t.action}</strong>
-                  <small>{t.detail}</small>
-                </li>
-              ))}
-            </ol>
+            <details className="trace-wrap">
+              <summary>How the agents got here · {analysis.trace.length} steps</summary>
+              <ol className="trace" aria-label="Agent trace">
+                {analysis.trace.map((t, i) => (
+                  <li key={i} className={`trace-step ${t.status}`}>
+                    <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
+                    <strong>{t.action}</strong>
+                    <small>{t.detail}</small>
+                  </li>
+                ))}
+              </ol>
+            </details>
           </div>
         )}
       </section>

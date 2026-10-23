@@ -17,7 +17,7 @@ METRIC_LABELS = {
 
 @dataclass
 class Claim:
-    """A tactical hypothesis whose numbers the Skeptic can check mechanically.
+    """A pundit's take, phrased so the Skeptic can check its numbers mechanically.
 
     compare="opponent": team's metric vs the other team over the same window.
     compare="previous": team's metric vs the equally long window just before.
@@ -32,10 +32,12 @@ class Claim:
     compare: str  # "opponent" | "previous"
     text: str
     evidence_ids: list[str] = field(default_factory=list)
-    proposed_by: str = "Tactics"
+    proposed_by: str = "Pundit"
     revision_of: str | None = None
-    verdict: str = "pending"  # verified | corrected | rejected
+    premise: bool = False  # tests an assumption hidden in the viewer's question
+    verdict: str = "pending"  # verified | corrected | unproven | rejected
     reason: str = ""
+    finding: str = ""  # what the event log actually shows, written by the Skeptic
     actual_value: float | None = None
     compare_value: float | None = None
 

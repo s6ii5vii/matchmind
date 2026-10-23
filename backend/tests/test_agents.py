@@ -40,9 +40,14 @@ class SkepticTests(unittest.TestCase):
         self.assertNotIn(away_shot, result.evidence_ids)
         self.assertTrue(result.evidence_ids)
 
-    def test_rejects_tiny_samples(self):
+    def test_tiny_samples_are_unproven_not_busted(self):
         tiny = claim(start=1, end=3, value=window_stats("home", 1, 3)["pressures"])
-        self.assertEqual(verify_claim(tiny, 3).verdict, "rejected")
+        self.assertEqual(verify_claim(tiny, 3).verdict, "unproven")
+
+    def test_finding_states_what_the_data_shows(self):
+        result = verify_claim(claim(team="away"), 70)
+        self.assertIn("Riverside United", result.finding)
+        self.assertIn("Northbridge City", result.finding)
 
 
 class WorkflowTests(unittest.TestCase):
@@ -52,14 +57,14 @@ class WorkflowTests(unittest.TestCase):
     def test_pipeline_runs_every_agent_once_and_narrates_once(self):
         result = self.run_job(70, "analyst", "home")
         agents = [t["agent"] for t in result["trace"]]
-        for name in ("Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"):
+        for name in ("Orchestrator", "Stats", "Pundit", "Skeptic", "Narrator"):
             self.assertIn(name, agents)
         self.assertEqual(agents.count("Narrator"), 1)
         self.assertEqual(agents[-1], "Narrator")
         self.assertTrue(result["narrative"])
 
-    def test_skeptic_sends_rejections_back_for_revision(self):
-        result = self.run_job(70, "analyst", "home")
+    def test_skeptic_sends_busted_takes_back_for_revision(self):
+        result = self.run_job(30, "analyst", "away")
         self.assertTrue(any(c["verdict"] == "rejected" for c in result["claims"]))
         self.assertEqual(result["rounds"], 1)
         self.assertTrue(any(c["revision_of"] for c in result["claims"]))
@@ -68,10 +73,30 @@ class WorkflowTests(unittest.TestCase):
         for minute in (12, 40, 70, 90):
             result = self.run_job(minute, "analyst", "away")
             for c in result["claims"]:
-                if c["verdict"] != "rejected":
+                if c["verdict"] in ("verified", "corrected"):
                     self.assertLessEqual(c["end"], minute)
                     for event_id in c["evidence_ids"]:
                         self.assertLessEqual(int(next(e for e in EVENTS if e["id"] == event_id)["minute"]), minute)
+
+    def test_pundit_is_usually_right_not_a_straw_man(self):
+        verdicts = [c["verdict"] for minute in range(15, 91, 5) for focus in ("home", "away")
+                    for c in self.run_job(minute, "fan", focus)["claims"] if not c["revision_of"]]
+        held = sum(v in ("verified", "corrected") for v in verdicts)
+        busted = verdicts.count("rejected")
+        self.assertGreater(held, len(verdicts) / 2)
+        self.assertGreater(busted, 0)  # but not always right either, or the Skeptic has nothing to do
+
+    def test_question_assumption_is_checked_first(self):
+        result = self.run_job(70, "fan", "home", "Why did Riverside lose control after 60?")
+        premise = result["claims"][0]
+        self.assertTrue(premise["premise"])
+        self.assertEqual(premise["team"], "away")
+        self.assertEqual(premise["verdict"], "verified")
+        self.assertTrue(result["narrative"].startswith("Your question assumes"))
+
+    def test_question_without_team_has_no_assumption(self):
+        result = self.run_job(55, "fan", "home", "Who is controlling the game?")
+        self.assertFalse(any(c["premise"] for c in result["claims"]))
 
     def test_question_sets_window_and_team(self):
         result = self.run_job(60, "fan", "home", "What did Riverside do between 20 and 35?")

@@ -1,6 +1,6 @@
 # MatchMind
 
-**A football analyst whose AI agents argue with each other.** Every claim needs evidence, and a Skeptic agent rejects anything the match data doesn't support.
+**The take vs. the data.** A Pundit agent says what everyone's thinking about the match; a Skeptic agent checks every take against the event log and says whether it holds up.
 
 Built for **Inside the Game: Microsoft Premier League Hackathon 2026** (Best Multi-Agent System).
 
@@ -10,13 +10,13 @@ Five agents run as a [Microsoft Agent Framework](https://github.com/microsoft/ag
 
 | Agent | Role |
 |---|---|
-| **Orchestrator** | Turns the viewer's question into a team, minute window and metrics to check |
+| **Orchestrator** | Turns the viewer's question into a team, minute window and metrics to check, and picks out any assumption in it ("why did Riverside lose control?") |
 | **Stats** | Computes the numbers from the event log (code, no model) |
-| **Tactics** | Proposes tactical claims, each citing evidence events (AI model or rules) |
-| **Skeptic** | Recomputes every claim: verified, corrected or rejected. Sends rejections back to Tactics for revision |
-| **Narrator** | Explains only verified claims, for fans or analysts. A grounding guard blocks any number not in a verified claim |
+| **Pundit** | Gives confident takes from what a viewer just saw: the last few minutes, no stats (AI model or rules). Usually right, sometimes caught out by recency bias |
+| **Skeptic** | Checks every take, and the question's assumption, against the full spell: holds up, half-right, not enough evidence, or doesn't hold up. Sends busted takes back to the Pundit to rethink |
+| **Narrator** | Tells fans or analysts what holds up and what doesn't. A grounding guard blocks any number the Skeptic didn't produce |
 
-Models can draft claims and wording, but every number a viewer sees is recomputed from the event log, and no agent can see events after the current minute. The dashboard shows the full agent trace.
+Models can draft takes and wording, but every number a viewer sees is recomputed from the event log, and no agent can see events after the current minute. The dashboard shows each take next to the data, with the full agent trace one click away.
 
 ## Run it
 
@@ -41,7 +41,7 @@ Tests (from `backend/`): `.\.venv\Scripts\python.exe -m unittest discover -s tes
 
 ### AI models (optional)
 
-Without credentials the agents run on rules and everything works offline. To let a model drive Tactics and Narrator, copy `backend/.env.example` to `backend/.env`, fill in one provider, and restart the backend. (`.env` is git-ignored; you can also set the same names as environment variables.)
+Without credentials the agents run on rules and everything works offline. To let a model drive the Pundit and Narrator, copy `backend/.env.example` to `backend/.env`, fill in one provider, and restart the backend. (`.env` is git-ignored; you can also set the same names as environment variables.)
 
 **Microsoft Foundry** (Azure OpenAI deployment):
 

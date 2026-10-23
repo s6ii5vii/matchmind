@@ -49,50 +49,59 @@ def _fmt(metric: str, value: float | None) -> str:
 
 
 def verify_claim(claim: Claim, minute: int) -> Claim:
-    """Skeptic's check: recompute the claim from the event log and accept, correct or reject it."""
-    def reject(reason: str) -> Claim:
-        claim.verdict, claim.reason = "rejected", reason
+    """Skeptic's check: recompute the take from the event log.
+
+    verified  - holds up as stated
+    corrected - right direction, but a number or evidence ID was wrong (fixed)
+    unproven  - too little evidence either way, so neither confirmed nor busted
+    rejected  - the data says otherwise (or the take is malformed / looks into the future)
+    """
+    def verdict(kind: str, reason: str) -> Claim:
+        claim.verdict, claim.reason = kind, reason
         return claim
 
     if (claim.team not in TEAMS or claim.metric not in METRIC_EVIDENCE
             or claim.relation not in ("more", "less") or claim.compare not in ("opponent", "previous")):
-        return reject("Malformed claim: unknown team, metric, relation or comparison.")
+        return verdict("rejected", "Malformed claim: unknown team, metric, relation or comparison.")
     if claim.end > minute:
-        return reject(f"Refers to minute {claim.end}, but only {minute} minutes have been played.")
+        return verdict("rejected", f"Refers to minute {claim.end}, but only {minute} minutes have been played.")
     if not 1 <= claim.start <= claim.end:
-        return reject("Invalid minute window.")
+        return verdict("rejected", "Invalid minute window.")
 
     team_name, label = TEAMS[claim.team]["name"], METRIC_LABELS[claim.metric]
     actual = _metric(claim.team, claim.metric, claim.start, claim.end)
     if actual is None:
-        return reject(f"Too few passes by {team_name} in minutes {claim.start}-{claim.end} to judge accuracy.")
+        return verdict("unproven", f"Too few passes by {team_name} in minutes {claim.start}-{claim.end} "
+                                   "to judge accuracy.")
 
     if claim.compare == "opponent":
         baseline = _metric(other(claim.team), claim.metric, claim.start, claim.end)
         baseline_shots = _metric(other(claim.team), "shots", claim.start, claim.end)
-        baseline_label = f"{TEAMS[other(claim.team)]['name']} {_fmt(claim.metric, baseline)}"
     else:
         length = claim.end - claim.start + 1
         if claim.start - length < 1:
-            return reject("No earlier window of the same length to compare against.")
+            return verdict("unproven", "No earlier spell of the same length to compare against yet.")
         baseline = _metric(claim.team, claim.metric, claim.start - length, claim.start - 1)
         baseline_shots = _metric(claim.team, "shots", claim.start - length, claim.start - 1)
-        baseline_label = f"{_fmt(claim.metric, baseline)} in minutes {claim.start - length}-{claim.start - 1}"
     if baseline is None:
-        return reject("Comparison window has too few passes to judge accuracy.")
+        return verdict("unproven", "The earlier spell has too few passes to judge accuracy.")
 
     claim.actual_value, claim.compare_value = actual, baseline
+    if claim.compare == "opponent":
+        claim.finding = (f"{team_name} {_fmt(claim.metric, actual)} vs {TEAMS[other(claim.team)]['name']} "
+                         f"{_fmt(claim.metric, baseline)} {label}, minutes {claim.start}-{claim.end}.")
+    else:
+        claim.finding = (f"{team_name} {label}: {_fmt(claim.metric, actual)} in minutes {claim.start}-{claim.end}, "
+                         f"{_fmt(claim.metric, baseline)} in the {claim.end - claim.start + 1} minutes before.")
     if claim.metric == "xg":  # xG sums are always non-zero-ish; judge the sample by shot count
         sample = _metric(claim.team, "shots", claim.start, claim.end) + baseline_shots
     else:
         sample = MIN_SAMPLE if claim.metric == "pass_accuracy" else actual + baseline
     if sample < MIN_SAMPLE:
-        return reject(f"{team_name} {label}: {_fmt(claim.metric, actual)} vs {baseline_label}. "
-                      "Too few events to call it a pattern.")
+        return verdict("unproven", "Too few events to call it a pattern either way.")
     holds = actual > baseline if claim.relation == "more" else actual < baseline
     if not holds:
-        return reject(f"{team_name} {label}: {_fmt(claim.metric, actual)} vs {baseline_label}. "
-                      f"The data does not show {claim.relation}.")
+        return verdict("rejected", "Level." if actual == baseline else "The data points the other way.")
 
     notes = []
     tolerance = TOLERANCE.get(claim.metric, 0)
@@ -109,8 +118,5 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
     claim.evidence_ids = valid or pick_evidence(claim.team, claim.metric, claim.start, claim.end)
 
     if notes:
-        claim.verdict, claim.reason = "corrected", "Direction holds; " + "; ".join(notes) + "."
-    else:
-        claim.verdict = "verified"
-        claim.reason = f"{team_name} {label}: {_fmt(claim.metric, actual)} vs {baseline_label}."
-    return claim
+        return verdict("corrected", "Right direction; " + "; ".join(notes) + ".")
+    return verdict("verified", "Holds up as stated.")
