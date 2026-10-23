@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Side = "home" | "away";
-type Mode = "fan" | "analyst";
+type Mode = "simple" | "fan" | "analyst";
 type Theme = "light" | "dark";
 type Filter = "all" | "goal" | "shot" | "pass" | "pressure" | "turnover";
 type Event = {
@@ -14,7 +14,7 @@ type Event = {
 type Stats = {
   goals: number; passes: number; completed_passes: number; pass_accuracy: number | null;
   shots: number; xg: number; pressures: number; tackles_won: number;
-  turnovers: number; event_share: number;
+  turnovers: number; event_share: number; possession: number | null; recoveries: number; final_third_entries: number;
 };
 type Insight = { title: string; body: string; kind: string; evidence_ids: string[]; window: string };
 type MatchState = {
@@ -24,25 +24,47 @@ type MatchState = {
   observed_event_count: number; method: string;
 };
 type Flash = { side: Side; player: string; clock: string; key: number };
-type Verdict = "verified" | "corrected" | "rejected" | "pending";
+type Verdict = "verified" | "corrected" | "unproven" | "rejected" | "pending";
 type Claim = {
   id: string; team: Side; metric: string; start: number; end: number; value: number;
   text: string; evidence_ids: string[]; proposed_by: string; revision_of: string | null;
-  verdict: Verdict; reason: string;
+  verdict: Verdict; reason: string; finding: string; premise: boolean; plain: string; plain_finding: string;
 };
 type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
+type Category = "scoring" | "creating" | "progression" | "defending" | "ball_security";
+type Player = {
+  name: string; team: Side; team_name: string; number: number; position: string; impact: number;
+  values: Record<Category, number>; counts: Record<string, number>;
+  moments: { event_id: string; what: string; points: number }[];
+};
+type Duel = { a: Player; b: Player; winner: string | null; verdict: string; categories: { key: Category; label: string }[] };
+const PLAIN_CATEGORY: Record<Category, string> = {
+  scoring: "Scoring", creating: "Setting up teammates", progression: "Moving the ball towards goal",
+  defending: "Winning the ball back", ball_security: "Not losing the ball",
+};
+const POSITION: Record<string, string> = { GK: "Goalkeeper", DF: "Defender", MF: "Midfielder", FW: "Forward" };
+
 type Analysis = {
   engine: "foundry" | "nebius" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
   claims: Claim[]; trace: TraceStep[]; minute: number;
 };
 
 const ENGINE_LABEL: Record<Analysis["engine"], string> = { foundry: "Microsoft Foundry", nebius: "Nebius Token Factory", offline: "Rule-based" };
-const AGENTS = ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"];
-const VERDICT_LABEL: Record<Verdict, string> = { verified: "Verified", corrected: "Corrected", rejected: "Rejected", pending: "Pending" };
+const AGENTS = ["Orchestrator", "Stats", "Pundit", "Skeptic", "Narrator"];
+const VERDICT_LABEL: Record<Verdict, string> = {
+  verified: "✓ Holds up", corrected: "◐ Half-right", unproven: "? Not enough evidence", rejected: "✕ Doesn't hold up", pending: "Pending",
+};
+
+function takeSource(c: Claim, simple: boolean): string {
+  if (c.premise) return simple ? "You asked about" : "Your question assumes";
+  if (simple) return c.revision_of ? "On second thoughts" : "People are saying";
+  return c.revision_of ? "Pundit, rethinking" : "The pundit says";
+}
 const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
 
 const descriptions: Record<string, string> = {
-  pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Turnover",
+  pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Lost the ball",
+  interception: "Interception", foul: "Foul",
 };
 
 const FILTERS: { id: Filter; label: string }[] = [
@@ -57,7 +79,8 @@ const FILTERS: { id: Filter; label: string }[] = [
 function eventLabel(event: Event): string {
   if (event.is_goal) return "Goal";
   if (event.type === "pass") return `${event.outcome === "complete" ? "Completed" : "Missed"} pass`;
-  if (event.type === "shot") return `Shot ${event.outcome}`;
+  if (event.type === "shot") return `Shot ${event.outcome.replace("_", " ")}`;
+  if (event.type === "tackle") return `Tackle ${event.outcome}`;
   return descriptions[event.type] ?? event.type;
 }
 
@@ -85,6 +108,9 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [pick, setPick] = useState<{ a: string; b: string }>({ a: "", b: "" });
+  const [duel, setDuel] = useState<Duel | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
 
@@ -131,6 +157,34 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [playing]);
   useEffect(() => { if (minute === 90) setPlaying(false); }, [minute]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/players?minute=${minute}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: { players: Player[] }) => setPlayers(result.players))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [minute]);
+
+  // default duel: the most influential goalscorer against the most influential defender
+  useEffect(() => {
+    if (pick.a || players.length === 0) return;
+    const scorer = players.find((p) => p.position === "FW") ?? players[0];
+    const defender = players.find((p) => p.position === "DF" && p.name !== scorer.name) ?? players[1];
+    setPick({ a: scorer.name, b: defender.name });
+  }, [players, pick.a]);
+
+  useEffect(() => {
+    if (!pick.a || !pick.b) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ a: pick.a, b: pick.b, minute: String(minute), mode });
+    fetch(`/api/compare?${params}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: Duel) => setDuel(result))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [pick, minute, mode]);
+
   const runAgents = useCallback(async (q: string) => {
     setPlaying(false);
     setAnalysisStatus("loading");
@@ -160,12 +214,14 @@ export default function Home() {
   const flashColor = flash ? (flash.side === "home" ? "var(--home)" : "var(--away)") : undefined;
 
   const rows: { label: string; h?: number | null; a?: number | null; unit?: string }[] = [
+    { label: "Possession", h: st?.home.possession, a: st?.away.possession, unit: "%" },
     { label: "Shots", h: st?.home.shots, a: st?.away.shots },
     { label: "Synthetic xG", h: st?.home.xg, a: st?.away.xg },
     { label: "Completed passes", h: st?.home.completed_passes, a: st?.away.completed_passes },
     { label: "Pass accuracy", h: st?.home.pass_accuracy, a: st?.away.pass_accuracy, unit: "%" },
     { label: "Pressure events", h: st?.home.pressures, a: st?.away.pressures },
-    { label: "Event share (not possession)", h: st?.home.event_share, a: st?.away.event_share, unit: "%" },
+    { label: "Final-third entries", h: st?.home.final_third_entries, a: st?.away.final_third_entries },
+    { label: "Ball recoveries", h: st?.home.recoveries, a: st?.away.recoveries },
   ];
 
   return (
@@ -289,6 +345,7 @@ export default function Home() {
           <div className="control-row">
             <span className="control-label">VIEWER PROFILE</span>
             <div className="seg">
+              <button className={mode === "simple" ? "active" : ""} onClick={() => setMode("simple")}>New to football</button>
               <button className={mode === "fan" ? "active" : ""} onClick={() => setMode("fan")}>Fan view</button>
               <button className={mode === "analyst" ? "active" : ""} onClick={() => setMode("analyst")}>Analyst view</button>
             </div>
@@ -322,7 +379,7 @@ export default function Home() {
         <div className="panel-head">
           <h2><span className="section-numeral">03</span>Agent room</h2>
           <span className="panel-meta">
-            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every claim checked"}
+            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every take checked"}
           </span>
         </div>
         <form className="ask" onSubmit={(e) => { e.preventDefault(); runAgents(question); }}>
@@ -341,47 +398,136 @@ export default function Home() {
         </div>
         {analysisStatus === "error" && <div className="recap-box error"><b>AGENTS UNAVAILABLE</b><p>Couldn&apos;t reach the analysis service. Check the backend is running.</p></div>}
         {!analysis && analysisStatus !== "error" && (
-          <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "Orchestrator → Stats → Tactics → Skeptic → Narrator. Ask a question or analyse this moment."}</div>
+          <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "A pundit gives the popular takes, a skeptic checks every one against the data. Ask a question or analyse this moment."}</div>
         )}
         {analysis && (
-          <div className="room-grid">
-            <div>
-              <div className="recap-box ai">
-                <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
-                <p>{analysis.narrative}</p>
-              </div>
-              <div className="claims">
-                {analysis.claims.map((c) => (
-                  <article key={c.id} className={`claim ${c.verdict}`}>
-                    <div className="claim-top">
+          <div className="room">
+            <div className="recap-box ai">
+              <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+              <p>{analysis.narrative}</p>
+            </div>
+            <div className="takes-summary">
+              <span><b>The take</b> vs <b>the data</b></span>
+              <span>
+                {(["verified", "corrected", "unproven", "rejected"] as Verdict[])
+                  .map((v) => [v, analysis.claims.filter((c) => c.verdict === v && !c.revision_of).length] as const)
+                  .filter(([, n]) => n > 0)
+                  .map(([v, n]) => `${n} ${VERDICT_LABEL[v].slice(2).toLowerCase()}`)
+                  .join(" · ")}
+              </span>
+            </div>
+            <div className="takes">
+              {analysis.claims.filter((c) => !c.revision_of || c.revision_of.includes(",")).map((c) => {
+                const rethink = analysis.claims.find((r) => r.revision_of === c.id);
+                return (
+                  <article key={c.id} className={`take ${c.verdict} ${c.premise ? "premise" : ""}`}>
+                    <div className="take-top">
+                      <span>{takeSource(c, mode === "simple")}</span>
                       <span className={`verdict ${c.verdict}`}>{VERDICT_LABEL[c.verdict]}</span>
-                      <span>{c.id}{c.revision_of ? ` · revises ${c.revision_of}` : ""}</span>
                     </div>
-                    <h3>{c.text}</h3>
-                    <p>{c.reason}</p>
-                    {c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
+                    <h3>&ldquo;{mode === "simple" && c.plain ? c.plain : c.text}&rdquo;</h3>
+                    <div className="take-data">
+                      <b>{mode === "simple" ? "WHAT ACTUALLY HAPPENED" : "THE DATA"}</b>
+                      <p>{mode === "simple" ? c.plain_finding || c.reason : c.finding || c.reason}</p>
+                      {c.verdict === "corrected" && mode !== "simple" && <small>{c.reason}</small>}
+                    </div>
+                    {rethink && (
+                      <div className={`rethink ${rethink.verdict}`}>
+                        <b>{mode === "simple" ? "ACTUALLY" : "RETHINK"}</b> &ldquo;{mode === "simple" && rethink.plain ? rethink.plain : rethink.text}&rdquo; <span className={`verdict ${rethink.verdict}`}>{VERDICT_LABEL[rethink.verdict]}</span>
+                      </div>
+                    )}
+                    {mode !== "simple" && c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
                       <div className="evidence"><b>SOURCE EVENTS</b>{c.evidence_ids.join(" · ")}</div>
                     )}
                   </article>
-                ))}
-              </div>
+                );
+              })}
             </div>
-            <ol className="trace" aria-label="Agent trace">
-              {analysis.trace.map((t, i) => (
-                <li key={i} className={`trace-step ${t.status}`}>
-                  <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
-                  <strong>{t.action}</strong>
-                  <small>{t.detail}</small>
-                </li>
-              ))}
-            </ol>
+            <details className="trace-wrap">
+              <summary>How the agents got here · {analysis.trace.length} steps</summary>
+              <ol className="trace" aria-label="Agent trace">
+                {analysis.trace.map((t, i) => (
+                  <li key={i} className={`trace-step ${t.status}`}>
+                    <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
+                    <strong>{t.action}</strong>
+                    <small>{t.detail}</small>
+                  </li>
+                ))}
+              </ol>
+            </details>
           </div>
         )}
       </section>
 
+      <section className="surface duel">
+        <div className="panel-head">
+          <h2><span className="section-numeral">04</span>Player duel</h2>
+          <span className="panel-meta">Impact so far · every action counts, not just goals</span>
+        </div>
+        <div className="duel-pickers">
+          {(["a", "b"] as const).map((slot, i) => (
+            <label key={slot} className={`picker ${slot}`}>
+              <span>{i === 0 ? "PLAYER A" : "PLAYER B"}</span>
+              <select value={pick[slot]} onChange={(e) => setPick({ ...pick, [slot]: e.target.value })}>
+                {(["home", "away"] as Side[]).map((side) => (
+                  <optgroup key={side} label={data?.teams[side].name ?? side}>
+                    {players.filter((p) => p.team === side).sort((x, y) => x.number - y.number).map((p) => (
+                      <option key={p.name} value={p.name}>{p.number}. {p.name} ({POSITION[p.position]})</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+        {duel && (
+          <>
+            <div className="recap-box ai duel-verdict"><b>{duel.winner ? `${duel.winner.toUpperCase()} · MORE IMPACT` : "TOO CLOSE TO CALL"}</b><p>{duel.verdict}</p></div>
+            <div className="duel-board">
+              <div className="stat-heading"><span>{duel.a.name}</span><span>IMPACT POINTS</span><span>{duel.b.name}</span></div>
+              {[...duel.categories.map((c) => ({ label: mode === "simple" ? PLAIN_CATEGORY[c.key] : c.label, h: duel.a.values[c.key], a: duel.b.values[c.key] })),
+                { label: "Total impact", h: duel.a.impact, a: duel.b.impact }].map((r) => {
+                const h = Math.max(0, r.h), a = Math.max(0, r.a), total = h + a;
+                const share = total > 0 ? (h / total) * 100 : 50;
+                return (
+                  <div className={`stat-row ${r.label === "Total impact" ? "total" : ""}`} key={r.label}>
+                    <div className="stat-nums">
+                      <strong className={r.h > r.a ? "lead" : ""}>{r.h}</strong>
+                      <span>{r.label}</span>
+                      <strong className={r.a > r.h ? "lead" : ""}>{r.a}</strong>
+                    </div>
+                    <div className="bar"><i className="bar-h" style={{ width: `${share}%` }} /><i className="bar-a" style={{ width: `${100 - share}%` }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="moments">
+              {[duel.a, duel.b].map((p) => (
+                <div key={p.name}>
+                  <b>{p.name.toUpperCase()} · BIGGEST MOMENTS</b>
+                  <ul>
+                    {p.moments.length ? p.moments.map((m) => (
+                      <li key={m.event_id}><span>{m.what}</span><code className={m.points < 0 ? "neg" : ""}>{m.points > 0 ? "+" : ""}{m.points}</code></li>
+                    )) : <li><span>Nothing yet</span></li>}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="leaders">
+          <b>MOST IMPACT SO FAR</b>
+          {players.slice(0, 5).map((p, i) => (
+            <button key={p.name} onClick={() => setPick({ ...pick, a: p.name === pick.b ? pick.a : p.name })}>
+              {i + 1}. {p.name} <small>{POSITION[p.position]} · {p.impact}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="surface stats-panel">
         <div className="panel-head">
-          <h2><span className="section-numeral">04</span>Match by the numbers</h2>
+          <h2><span className="section-numeral">05</span>Match by the numbers</h2>
           <span className="panel-meta">Cumulative · through {minute}&apos;</span>
         </div>
         <div className="stat-heading"><span>{home?.abbr ?? "NBR"}</span><span>METRIC</span><span>{away?.abbr ?? "RSU"}</span></div>
