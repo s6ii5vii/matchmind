@@ -7,6 +7,8 @@
   `git config user.email "259956125+s6ii5vii@users.noreply.github.com"`
 - Do NOT add `Co-Authored-By`, `Claude-Session`, "Generated with Claude Code" or any other
   attribution lines to commit messages or PR descriptions. Claude must not appear as a contributor.
+- Branch names must not contain "claude". Use plain names like `feature/<topic>` or `fix/<topic>`,
+  even if the session suggests a `claude/...` branch.
 
 ## Project
 
