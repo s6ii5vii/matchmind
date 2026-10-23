@@ -20,6 +20,8 @@ Models can draft takes and wording, but every number a viewer sees is recomputed
 
 **For everyone.** Every answer comes in three versions: *New to football* (no jargon, a short answer first, then the reasons in everyday words), *Fan* and *Analyst* (with the numbers and evidence events).
 
+**Key moments.** A timeline of the goals and big chances, each told as a story ("I. Brown loses the ball near their own goal → a 4-pass move, set up by M. Diallo → A. Okafor scores"). Click one to replay the move on the pitch, or ask the agents about it: the answer starts with what happened, then checks the takes about the minutes before.
+
 **Player rating.** Every player gets a rating out of 10 that starts at 6.0 and moves with the match. Instead of just adding up actions, it asks who drove the moments that mattered: every move that ends in a shot or goal shares its value between the shooter, the player who set it up, the others in the move and whoever won the ball back to start it, and every chance the opponent creates straight after a player loses the ball is charged to that player. Everyday actions (passes forward, ball wins, worth more near your own goal, losing the ball) count for less. Each action is worth -10 to +10 impact points. Compare any two players in the Player duel: a hard-working defender can outrate a striker who scored.
 
 ## Run it

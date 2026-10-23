@@ -37,6 +37,11 @@ type Player = {
   values: Record<Category, number>; counts: Record<string, number>;
   moments: { event_id: string; what: string; points: number }[];
 };
+type MomentPoint = { x: number; y: number; player: string; kind: "win" | "pass" | "shot" | "goal" };
+type Moment = {
+  id: string; minute: number; clock: string; team: Side; kind: "goal" | "chance"; title: string; story: string;
+  xg: number; question: string; path: MomentPoint[];
+};
 type Duel = { a: Player; b: Player; winner: string | null; verdict: string; categories: { key: Category; label: string }[] };
 const PLAIN_CATEGORY: Record<Category, string> = {
   chances: "Helping create chances", build_up: "Moving the ball towards goal",
@@ -113,6 +118,8 @@ export default function Home() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [pick, setPick] = useState<{ a: string; b: string }>({ a: "", b: "" });
   const [duel, setDuel] = useState<Duel | null>(null);
+  const [moments, setMoments] = useState<Moment[]>([]);
+  const [momentId, setMomentId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
 
@@ -164,6 +171,15 @@ export default function Home() {
     fetch(`/api/players?minute=${minute}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((result: { players: Player[] }) => setPlayers(result.players))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [minute]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/moments?minute=${minute}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: { moments: Moment[] }) => setMoments(result.moments))
       .catch(() => {});
     return () => controller.abort();
   }, [minute]);
@@ -232,13 +248,17 @@ export default function Home() {
     }
   }, [minute, mode, focus]);
 
+  const askAbout = (q: string) => {
+    setQuestion(q);
+    document.getElementById("agents")?.scrollIntoView({ behavior: "smooth" });
+    runAgents(q);
+  };
+  const moment = moments.find((m) => m.id === momentId) ?? moments[0];
+
   const st = data?.stats;
   const home = data?.teams.home;
   const away = data?.teams.away;
   const goals = data?.goal_events ?? [];
-  const trail = (data?.recent_events ?? []).slice(0, 5);
-  const head = trail[0];
-  const chrono = [...trail].reverse();
   const feed = (data?.recent_events ?? []).filter((e) => matchesFilter(e, filter)).slice(0, 6);
   const pct = (minute / 90) * 100;
   const status = playing ? "Live" : minute === 0 ? "Kick-off" : minute === 90 ? "Full time" : "Paused";
@@ -390,9 +410,10 @@ export default function Home() {
         )}
         {analysis && analysisStatus !== "loading" && (
           <div className="room">
-            <div className="recap-box ai">
-              <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+            <div className="answer">
+              <b>THE ANSWER · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
               <p>{analysis.narrative}</p>
+              <small>Written by the Narrator{analysis.narrative_source === "model" ? ` (${ENGINE_LABEL[analysis.engine]} model)` : ""} from the takes the Skeptic checked below.</small>
             </div>
             <div className="takes-summary">
               <span><b>The take</b> vs <b>the data</b></span>
@@ -526,48 +547,70 @@ export default function Home() {
         </div>
       </section>
 
-        <section className="surface feed-panel">
+        <section className="surface moments-panel">
           <div className="panel-head">
-            <h2><span className="section-numeral">03</span>Live event feed</h2>
-            <span className="panel-meta">{data?.observed_event_count ?? 0} events observed</span>
+            <h2><span className="section-numeral">03</span>Key moments</h2>
+            <span className="panel-meta">Goals and big chances · click one to replay it</span>
           </div>
-          <div className="tabs" role="tablist">
-            {FILTERS.map((f) => (
-              <button key={f.id} role="tab" aria-selected={filter === f.id} className={`tab ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)}>{f.label}</button>
-            ))}
-          </div>
-          <div className="feed-body">
-          <div className="field">
-            <div className="field-half" /><div className="center-circle" />
-            <div className="field-box left-box" /><div className="field-box right-box" />
-            {chrono.length > 1 && (
-              <svg className="trail-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <polyline points={chrono.map((e) => `${e.x},${e.y}`).join(" ")} />
-              </svg>
-            )}
-            {trail.slice(1).map((e, i) => (
-              <span key={e.id} className={`trail-dot ${e.team}`} style={{ left: `${e.x}%`, top: `${e.y}%`, opacity: Math.max(0.15, 0.8 - i * 0.2) }} />
-            ))}
-            {head && (
-              <div className={`event-point ${head.team}`} style={{ left: `${head.x}%`, top: `${head.y}%` }}>
-                <span className="point-core" /><span className="point-label">{head.player}</span>
+          {moment ? (
+            <div className="moments-body">
+              <div className="field replay" aria-label={`Replay: ${moment.title}`}>
+                <div className="field-half" /><div className="center-circle" />
+                <div className="field-box left-box" /><div className="field-box right-box" />
+                <svg key={moment.id} className="replay-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <polyline className={`replay-line ${moment.team}`} pathLength={1} points={moment.path.map((p) => `${p.x},${p.y}`).join(" ")} />
+                </svg>
+                {moment.path.map((p, i) => (
+                  <span
+                    key={`${moment.id}-${i}`}
+                    className={`replay-dot ${moment.team} ${p.kind}`}
+                    style={{ left: `${p.x}%`, top: `${p.y}%`, animationDelay: `${(i / Math.max(1, moment.path.length - 1)) * 1.6}s` }}
+                    title={p.player}
+                  >
+                    {(i === 0 || i === moment.path.length - 1) && <i>{p.player}</i>}
+                  </span>
+                ))}
+                <div className="field-label">{moment.clock} · {moment.title.toUpperCase()}</div>
               </div>
-            )}
-            <div className="field-label">ILLUSTRATIVE EVENT COORDINATE — NOT REAL TRACKING</div>
-          </div>
-          <div className="event-list">
-            {feed.length ? feed.map((event) => (
-              <div className={`event-item ${event.is_goal ? "goal-item" : ""}`} key={event.id}>
-                <span className="event-time">{event.clock}</span>
-                <span className={`event-indicator ${event.team}`} />
-                <span className="event-content"><b>{eventLabel(event)}</b><small>{event.player} · {data?.teams[event.team].abbr}</small></span>
-                <code>{event.id}</code>
-              </div>
-            )) : (
-              <div className="empty">{data?.recent_events.length ? "Nothing matches that filter yet." : "Hit play to start receiving synthetic match events."}</div>
-            )}
-          </div>
-          </div>
+              <ol className="moment-list">
+                {moments.map((m) => (
+                  <li key={m.id} className={`${m.id === moment.id ? "active" : ""} ${m.kind}`}>
+                    <button className="moment-pick" onClick={() => setMomentId(m.id)}>
+                      <span className="moment-min">{m.minute}&apos;</span>
+                      <span className={`event-indicator ${m.team}`} />
+                      <span className="moment-text">
+                        <b>{m.kind === "goal" ? "Goal · " : ""}{m.title}</b>
+                        <small>{m.story}{mode !== "simple" ? ` · ${m.xg.toFixed(2)} xG` : ""}</small>
+                      </span>
+                    </button>
+                    <button className="ask-about" onClick={() => askAbout(m.question)} disabled={analysisStatus === "loading"} aria-label={`Ask the agents about ${m.title} at ${m.minute}'`}>Ask the agents →</button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : (
+            <div className="empty moments-empty">{minute === 0 ? "Play the match to see its key moments." : "No goals or big chances yet."}</div>
+          )}
+          <details className="every-event">
+            <summary>Every event · {data?.observed_event_count ?? 0} so far</summary>
+            <div className="tabs" role="tablist">
+              {FILTERS.map((f) => (
+                <button key={f.id} role="tab" aria-selected={filter === f.id} className={`tab ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)}>{f.label}</button>
+              ))}
+            </div>
+            <div className="event-list">
+              {feed.length ? feed.map((event) => (
+                <div className={`event-item ${event.is_goal ? "goal-item" : ""}`} key={event.id}>
+                  <span className="event-time">{event.clock}</span>
+                  <span className={`event-indicator ${event.team}`} />
+                  <span className="event-content"><b>{eventLabel(event)}</b><small>{event.player} · {data?.teams[event.team].abbr}</small></span>
+                  <code>{event.id}</code>
+                </div>
+              )) : (
+                <div className="empty">{data?.recent_events.length ? "Nothing matches that filter yet." : "Hit play to start receiving synthetic match events."}</div>
+              )}
+            </div>
+          </details>
         </section>
 
       <section className="surface stats-panel">

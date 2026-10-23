@@ -11,6 +11,7 @@ from app.agents.llm import configured_provider, model_client, ungrounded_numbers
 from app.agents.models import Claim, Job
 from app.agents.tools import verify_claim, window_stats
 from app.main import app
+from app.moments import key_moments
 from app.players import compare, ranking
 from app.synthetic import EVENTS
 
@@ -117,6 +118,32 @@ class WorkflowTests(unittest.TestCase):
         result = self.run_job(70, "fan", "home", client=object())
         self.assertEqual(result["engine"], "offline")
         self.assertTrue(result["narrative"])
+
+
+class KeyMomentTests(unittest.TestCase):
+    def test_moments_never_come_from_the_future(self):
+        self.assertTrue(all(m["minute"] <= 50 for m in key_moments(50)))
+        self.assertEqual([m["kind"] for m in key_moments(17)].count("goal"), 0)
+
+    def test_goals_have_a_story_and_a_replay_path(self):
+        goals = [m for m in key_moments(90) if m["kind"] == "goal"]
+        self.assertEqual(len(goals), 3)
+        for m in goals:
+            self.assertTrue(m["creator"])
+            self.assertEqual(m["path"][-1]["kind"], "goal")
+            self.assertGreaterEqual(len(m["path"]), 3)
+            self.assertIn(m["shooter"], m["title"])
+
+    def test_ask_about_a_moment_looks_at_the_minutes_before_it(self):
+        moment = next(m for m in key_moments(90) if m["minute"] == 72)
+        result = asyncio.run(run_analysis(90, "fan", "home", moment["question"]))
+        self.assertEqual(result["window"], [63, 72])
+        self.assertTrue(result["narrative"].startswith("At 72:36, I. Brown gave the ball away"))
+        self.assertIn("A. Okafor scored", result["narrative"])
+
+    def test_asking_about_a_moment_that_has_not_happened_says_nothing_about_it(self):
+        result = asyncio.run(run_analysis(60, "fan", "home", "What led to Northbridge City's goal at 72?"))
+        self.assertNotIn("Okafor scored", result["narrative"])
 
 
 class PunditWordingTests(unittest.TestCase):
@@ -230,6 +257,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(items[-1]["type"], "result")
         self.assertTrue(items[-1]["result"]["narrative"])
         self.assertNotIn("listener", items[-1]["result"])
+
+    def test_moments_endpoint(self):
+        moments = TestClient(app).get("/api/moments?minute=45").json()["moments"]
+        self.assertTrue(moments)
+        self.assertEqual(moments, sorted(moments, key=lambda m: -m["minute"]))
 
     def test_players_and_compare_endpoints(self):
         client = TestClient(app)

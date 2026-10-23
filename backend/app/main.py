@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .agents import model_client, run_analysis
 from .agents.llm import configured_provider
 from .analysis import build_state
+from .moments import key_moments
 from .players import compare, ranking
 from .synthetic import EVENTS, TEAMS
 
@@ -110,6 +111,12 @@ async def analyze_stream(body: AnalyzeRequest):
 def players(minute: int = Query(90, ge=0, le=90)):
     """Every player's impact so far: credit for all actions, not just goals and assists."""
     return {"synthetic": True, "minute": minute, "players": ranking(minute)}
+
+
+@app.get("/api/moments")
+def moments(minute: int = Query(90, ge=0, le=90)):
+    """Goals and big chances so far, newest first, with each move's path for the pitch replay."""
+    return {"synthetic": True, "minute": minute, "moments": key_moments(minute)}
 
 
 @app.get("/api/compare")
