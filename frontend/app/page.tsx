@@ -16,11 +16,10 @@ type Stats = {
   shots: number; xg: number; pressures: number; tackles_won: number;
   turnovers: number; event_share: number; possession: number | null; recoveries: number; final_third_entries: number;
 };
-type Insight = { title: string; body: string; kind: string; evidence_ids: string[]; window: string };
 type MatchState = {
   minute: number; is_synthetic: boolean; teams: Record<Side, { name: string; abbr: string; color: string }>;
   score: Record<Side, number>; stats: Record<Side, Stats>;
-  insights: Insight[]; recent_events: Event[]; goal_events: Event[];
+  recent_events: Event[]; goal_events: Event[];
   observed_event_count: number; method: string;
 };
 type Flash = { side: Side; player: string; clock: string; key: number };
@@ -108,6 +107,8 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [live, setLive] = useState<{ agent: string | null; detail: string; seen: string[]; steps: TraceStep[] }>(
+    { agent: null, detail: "", seen: [], steps: [] });
   const [players, setPlayers] = useState<Player[]>([]);
   const [pick, setPick] = useState<{ a: string; b: string }>({ a: "", b: "" });
   const [duel, setDuel] = useState<Duel | null>(null);
@@ -188,13 +189,42 @@ export default function Home() {
   const runAgents = useCallback(async (q: string) => {
     setPlaying(false);
     setAnalysisStatus("loading");
+    setLive({ agent: null, detail: "", seen: [], steps: [] });
     try {
-      const response = await fetch("/api/analyze", {
+      // the agents report each step as it happens (newline-delimited JSON), then the result
+      const response = await fetch("/api/analyze/stream", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ minute, mode, focus, question: q }),
       });
-      if (!response.ok) throw new Error(`API returned ${response.status}`);
-      setAnalysis((await response.json()) as Analysis);
+      if (!response.ok || !response.body) throw new Error(`API returned ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result: Analysis | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line) continue;
+          const item = JSON.parse(line);
+          if (item.type === "working") {
+            setLive((l) => ({ ...l, agent: item.agent, detail: item.detail,
+              seen: l.agent && !l.seen.includes(l.agent) ? [...l.seen, l.agent] : l.seen }));
+          } else if (item.type === "step") {
+            setLive((l) => ({ ...l, steps: [...l.steps, item as TraceStep] }));
+          } else if (item.type === "result") {
+            result = item.result as Analysis;
+          } else if (item.type === "error") {
+            throw new Error(item.detail);
+          }
+        }
+      }
+      if (!result) throw new Error("No result");
+      setAnalysis(result);
       setAnalysisStatus("idle");
     } catch {
       setAnalysisStatus("error");
@@ -229,7 +259,7 @@ export default function Home() {
       <header className="header">
         <div className="brand"><span className="brand-icon">m</span><span>matchmind</span></div>
         <div className="header-right">
-          <span className="header-meta">Build 0.2 — synthetic data</span>
+          <span className="header-meta">v0.3 · fictional match</span>
           <button className="icon-btn" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle theme">
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
@@ -238,8 +268,9 @@ export default function Home() {
 
       <section className="hero">
         <div>
-          <h1>Watched the goal. Missed <em>the why?</em></h1>
-          <p>A ranked read on what actually mattered in the match, with every insight tied to the exact events that caused it. Fictional clubs, real receipts.</p>
+          <h1>Hear the take. <em>See the data.</em></h1>
+          <p>Five AI agents watch the match with you. A Pundit says what everyone&apos;s thinking; a Skeptic checks it against every pass, tackle and shot. Ask anything, in plain English.</p>
+          <a className="hero-cta" href="#agents">Ask the agents ↓</a>
         </div>
         <div className="hero-meta"><b>Proof of concept</b><br />Premier League Hackathon<br />2026</div>
       </section>
@@ -294,90 +325,27 @@ export default function Home() {
         ))}
       </div>
 
-      <div className="content-grid">
-        <section className="surface">
-          <div className="panel-head">
-            <h2><span className="section-numeral">01</span>Live event feed</h2>
-            <span className="panel-meta">{data?.observed_event_count ?? 0} events observed</span>
+      <div className="view-bar">
+        <div className="control-row">
+          <span className="control-label">EXPLAIN IT FOR</span>
+          <div className="seg">
+            <button className={mode === "simple" ? "active" : ""} onClick={() => setMode("simple")}>New to football</button>
+            <button className={mode === "fan" ? "active" : ""} onClick={() => setMode("fan")}>Fan</button>
+            <button className={mode === "analyst" ? "active" : ""} onClick={() => setMode("analyst")}>Analyst</button>
           </div>
-          <div className="tabs" role="tablist">
-            {FILTERS.map((f) => (
-              <button key={f.id} role="tab" aria-selected={filter === f.id} className={`tab ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)}>{f.label}</button>
-            ))}
+        </div>
+        <div className="control-row">
+          <span className="control-label">FOLLOWING</span>
+          <div className="seg">
+            <button className={focus === "home" ? "active" : ""} onClick={() => setFocus("home")}>Northbridge City</button>
+            <button className={focus === "away" ? "active" : ""} onClick={() => setFocus("away")}>Riverside United</button>
           </div>
-          <div className="field">
-            <div className="field-half" /><div className="center-circle" />
-            <div className="field-box left-box" /><div className="field-box right-box" />
-            {chrono.length > 1 && (
-              <svg className="trail-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <polyline points={chrono.map((e) => `${e.x},${e.y}`).join(" ")} />
-              </svg>
-            )}
-            {trail.slice(1).map((e, i) => (
-              <span key={e.id} className={`trail-dot ${e.team}`} style={{ left: `${e.x}%`, top: `${e.y}%`, opacity: Math.max(0.15, 0.8 - i * 0.2) }} />
-            ))}
-            {head && (
-              <div className={`event-point ${head.team}`} style={{ left: `${head.x}%`, top: `${head.y}%` }}>
-                <span className="point-core" /><span className="point-label">{head.player}</span>
-              </div>
-            )}
-            <div className="field-label">ILLUSTRATIVE EVENT COORDINATE — NOT REAL TRACKING</div>
-          </div>
-          <div className="event-list">
-            {feed.length ? feed.map((event) => (
-              <div className={`event-item ${event.is_goal ? "goal-item" : ""}`} key={event.id}>
-                <span className="event-time">{event.clock}</span>
-                <span className={`event-indicator ${event.team}`} />
-                <span className="event-content"><b>{eventLabel(event)}</b><small>{event.player} · {data?.teams[event.team].abbr}</small></span>
-                <code>{event.id}</code>
-              </div>
-            )) : (
-              <div className="empty">{data?.recent_events.length ? "Nothing matches that filter yet." : "Hit play to start receiving synthetic match events."}</div>
-            )}
-          </div>
-        </section>
-
-        <section className="surface">
-          <div className="panel-head">
-            <h2><span className="section-numeral">02</span>Intelligence desk</h2>
-            <span className="panel-meta">Ranked · evidence-based</span>
-          </div>
-          <div className="control-row">
-            <span className="control-label">VIEWER PROFILE</span>
-            <div className="seg">
-              <button className={mode === "simple" ? "active" : ""} onClick={() => setMode("simple")}>New to football</button>
-              <button className={mode === "fan" ? "active" : ""} onClick={() => setMode("fan")}>Fan view</button>
-              <button className={mode === "analyst" ? "active" : ""} onClick={() => setMode("analyst")}>Analyst view</button>
-            </div>
-          </div>
-          <div className="control-row">
-            <span className="control-label">FOLLOWING TEAM</span>
-            <div className="seg">
-              <button className={focus === "home" ? "active" : ""} onClick={() => setFocus("home")}>Northbridge City</button>
-              <button className={focus === "away" ? "active" : ""} onClick={() => setFocus("away")}>Riverside United</button>
-            </div>
-          </div>
-          <div className="insights">
-            {data?.insights.length ? data.insights.map((insight, idx) => (
-              <article className="insight-card" key={`${minute}-${idx}`}>
-                <span className="rank">{String(idx + 1).padStart(2, "0")}</span>
-                <div>
-                  <div className="insight-top"><span>{insight.window}</span><span>{insight.kind}</span></div>
-                  <h3>{insight.title}</h3>
-                  <p>{insight.body}</p>
-                  <div className="evidence">
-                    {insight.evidence_ids.length ? <><b>SOURCE EVENTS</b>{insight.evidence_ids.join(" · ")}</> : <b>AWAITING EVIDENCE</b>}
-                  </div>
-                </div>
-              </article>
-            )) : <div className="empty">{data ? "No insights at this minute." : "Fetching verified match context…"}</div>}
-          </div>
-        </section>
+        </div>
       </div>
 
-      <section className="surface agent-room">
+      <section className="surface agent-room" id="agents">
         <div className="panel-head">
-          <h2><span className="section-numeral">03</span>Agent room</h2>
+          <h2><span className="section-numeral">01</span>Agent room</h2>
           <span className="panel-meta">
             {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every take checked"}
           </span>
@@ -397,10 +365,29 @@ export default function Home() {
           ))}
         </div>
         {analysisStatus === "error" && <div className="recap-box error"><b>AGENTS UNAVAILABLE</b><p>Couldn&apos;t reach the analysis service. Check the backend is running.</p></div>}
-        {!analysis && analysisStatus !== "error" && (
+        {!analysis && analysisStatus === "idle" && (
           <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "A pundit gives the popular takes, a skeptic checks every one against the data. Ask a question or analyse this moment."}</div>
         )}
-        {analysis && (
+        {analysisStatus === "loading" && (
+          <div className="live" aria-live="polite">
+            <ol className="pipeline">
+              {AGENTS.map((name) => {
+                const state = name === live.agent ? "working" : live.seen.includes(name) ? "done" : "waiting";
+                return <li key={name} className={state}><span>{name}</span><small>{state === "working" ? live.detail : state === "done" ? "done" : "waiting"}</small></li>;
+              })}
+            </ol>
+            <ol className="trace live-trace">
+              {live.steps.map((t, i) => (
+                <li key={i} className={`trace-step ${t.status}`}>
+                  <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
+                  <strong>{t.action}</strong>
+                  <small>{t.detail}</small>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        {analysis && analysisStatus !== "loading" && (
           <div className="room">
             <div className="recap-box ai">
               <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
@@ -461,7 +448,7 @@ export default function Home() {
 
       <section className="surface duel">
         <div className="panel-head">
-          <h2><span className="section-numeral">04</span>Player duel</h2>
+          <h2><span className="section-numeral">02</span>Player duel</h2>
           <span className="panel-meta">Impact so far · every action counts, not just goals</span>
         </div>
         <div className="duel-pickers">
@@ -525,9 +512,53 @@ export default function Home() {
         </div>
       </section>
 
+        <section className="surface feed-panel">
+          <div className="panel-head">
+            <h2><span className="section-numeral">03</span>Live event feed</h2>
+            <span className="panel-meta">{data?.observed_event_count ?? 0} events observed</span>
+          </div>
+          <div className="tabs" role="tablist">
+            {FILTERS.map((f) => (
+              <button key={f.id} role="tab" aria-selected={filter === f.id} className={`tab ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)}>{f.label}</button>
+            ))}
+          </div>
+          <div className="feed-body">
+          <div className="field">
+            <div className="field-half" /><div className="center-circle" />
+            <div className="field-box left-box" /><div className="field-box right-box" />
+            {chrono.length > 1 && (
+              <svg className="trail-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <polyline points={chrono.map((e) => `${e.x},${e.y}`).join(" ")} />
+              </svg>
+            )}
+            {trail.slice(1).map((e, i) => (
+              <span key={e.id} className={`trail-dot ${e.team}`} style={{ left: `${e.x}%`, top: `${e.y}%`, opacity: Math.max(0.15, 0.8 - i * 0.2) }} />
+            ))}
+            {head && (
+              <div className={`event-point ${head.team}`} style={{ left: `${head.x}%`, top: `${head.y}%` }}>
+                <span className="point-core" /><span className="point-label">{head.player}</span>
+              </div>
+            )}
+            <div className="field-label">ILLUSTRATIVE EVENT COORDINATE — NOT REAL TRACKING</div>
+          </div>
+          <div className="event-list">
+            {feed.length ? feed.map((event) => (
+              <div className={`event-item ${event.is_goal ? "goal-item" : ""}`} key={event.id}>
+                <span className="event-time">{event.clock}</span>
+                <span className={`event-indicator ${event.team}`} />
+                <span className="event-content"><b>{eventLabel(event)}</b><small>{event.player} · {data?.teams[event.team].abbr}</small></span>
+                <code>{event.id}</code>
+              </div>
+            )) : (
+              <div className="empty">{data?.recent_events.length ? "Nothing matches that filter yet." : "Hit play to start receiving synthetic match events."}</div>
+            )}
+          </div>
+          </div>
+        </section>
+
       <section className="surface stats-panel">
         <div className="panel-head">
-          <h2><span className="section-numeral">05</span>Match by the numbers</h2>
+          <h2><span className="section-numeral">04</span>Match by the numbers</h2>
           <span className="panel-meta">Cumulative · through {minute}&apos;</span>
         </div>
         <div className="stat-heading"><span>{home?.abbr ?? "NBR"}</span><span>METRIC</span><span>{away?.abbr ?? "RSU"}</span></div>
@@ -549,7 +580,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>MATCHMIND / v0.2</span>
+        <span>MATCHMIND / v0.3</span>
         <span>ALL CLUBS, PLAYERS, EVENTS AND xG ARE FICTIONAL · NO ACTUAL LEAGUE FOOTAGE</span>
         <span>EXPLAINABILITY FIRST</span>
       </footer>

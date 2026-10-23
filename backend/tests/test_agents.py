@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import unittest
 from unittest import mock
@@ -191,6 +192,19 @@ class ApiTests(unittest.TestCase):
         body = res.json()
         self.assertTrue(body["synthetic"])
         self.assertEqual(body["claims"][0]["metric"], "pressures")
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_analyze_stream_reports_each_agent_then_the_result(self):
+        with TestClient(app).stream("POST", "/api/analyze/stream",
+                                    json={"minute": 70, "mode": "fan", "focus": "home"}) as res:
+            items = [json.loads(line) for line in res.iter_lines() if line]
+        working = [i["agent"] for i in items if i["type"] == "working"]
+        self.assertEqual(working[:3], ["Orchestrator", "Stats", "Pundit"])
+        self.assertIn("Narrator", working)
+        self.assertTrue(any(i["type"] == "step" for i in items))
+        self.assertEqual(items[-1]["type"], "result")
+        self.assertTrue(items[-1]["result"]["narrative"])
+        self.assertNotIn("listener", items[-1]["result"])
 
     def test_players_and_compare_endpoints(self):
         client = TestClient(app)

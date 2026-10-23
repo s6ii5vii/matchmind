@@ -1,5 +1,6 @@
 """Messages that flow between the MatchMind agents."""
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 METRIC_LABELS = {
@@ -51,6 +52,22 @@ class TraceStep:
     status: str = "info"  # info | ok | warn | reject
 
 
+class Relay:
+    """Passes agent steps to whoever is watching. The workflow may deep-copy messages between agents,
+    so this must stay the same object rather than copying whatever it reports to."""
+    def __init__(self, send: Callable[[dict], None]):
+        self.send = send
+
+    def __call__(self, item: dict) -> None:
+        self.send(item)
+
+    def __copy__(self) -> "Relay":
+        return self
+
+    def __deepcopy__(self, memo: dict) -> "Relay":
+        return self
+
+
 @dataclass
 class Job:
     """The shared case file passed along the workflow; each agent adds to it."""
@@ -68,11 +85,25 @@ class Job:
     narrative: str = ""
     narrative_source: str = ""
     trace: list[TraceStep] = field(default_factory=list)
+    # called with each step as it happens, so the dashboard can show the agents working live
+    listener: Callable[[dict], None] | None = field(default=None, repr=False, compare=False)
 
     def log(self, agent: str, action: str, detail: str, status: str = "info") -> None:
-        self.trace.append(TraceStep(agent, action, detail, status))
+        step = TraceStep(agent, action, detail, status)
+        self.trace.append(step)
+        if self.listener:
+            self.listener({"type": "step", **asdict(step)})
+
+    def working(self, agent: str, what: str) -> None:
+        if self.listener:
+            self.listener({"type": "working", "agent": agent, "detail": what})
 
     def to_dict(self) -> dict:
-        data = asdict(self)
+        listener, self.listener = self.listener, None
+        try:
+            data = asdict(self)
+        finally:
+            self.listener = listener
+        data.pop("listener")
         data["window"] = list(self.window)
         return data
