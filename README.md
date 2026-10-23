@@ -2,14 +2,14 @@
 
 An original hackathon MVP built for **Inside the Game: Microsoft Premier League Hackathon (2026)**.
 
-## What works in v0.1
+## What works in v0.2
 
 - A deterministic, explicitly **synthetic** 90-minute event stream (passes, pressure events, tackles, turnovers, shots, goals).
 - Auditable event-based match statistics, including goals, pass completion, shots, synthetic xG, pressures, and **event share (not possession time)**.
-- Explainable tactical observations with linked evidence event IDs.
+- **Agent room: a multi-agent workflow built on Microsoft Agent Framework.** Five agents investigate the match so far and answer viewer questions ("Why did Riverside lose control after 60?"). A Skeptic agent checks every claim against the event log and rejects or corrects anything the data doesn't support. The full agent trace is shown in the dashboard.
+- Optional Microsoft Foundry models for the Tactics and Narrator agents. Without credentials, rule-based agents run the same workflow.
 - Live playback timeline, tactical feed, favorite-team focus, fan/analyst modes, goal milestones.
-- Optional Azure OpenAI model call through Microsoft Foundry to rewrite verified evidence into a short narrative.
-- Tests protecting against future-event leakage.
+- Tests covering future-event leakage, the Skeptic's checks, the revision loop and the grounding guard.
 
 ## Requirements
 
@@ -50,11 +50,11 @@ From `backend/`:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-## Optional: Microsoft Foundry narration
+## Optional: Microsoft Foundry models for the agents
 
-This is an **optional** Azure OpenAI-compatible deployment inside Microsoft Foundry, *not yet a full multi-agent workflow*. The dashboard remains usable without cloud access.
+With no credentials, the agents are rule-based and the dashboard works fully offline. To let Foundry models drive the **Tactics** and **Narrator** agents:
 
-1. Create or choose a model deployment exposed through the Azure OpenAI API.
+1. In Microsoft Foundry, deploy a chat model (for example a GPT-4o-class model) exposed through the Azure OpenAI API.
 2. Set these environment variables in the **backend terminal** (replace placeholders):
 
 ```powershell
@@ -63,28 +63,36 @@ $env:AZURE_OPENAI_DEPLOYMENT='YOUR-DEPLOYMENT-NAME'
 $env:AZURE_OPENAI_API_KEY='YOUR_API_KEY'
 ```
 
-3. Restart the backend, then click **AI recap** in the dashboard.
+3. Restart the backend. The Agent room header changes to **Microsoft Foundry agents**.
 
-Never commit keys, secrets or `.env` files to GitHub. Some Microsoft Foundry endpoints use a different SDK/protocol and will need an adapter; do not assume any Foundry URL works with this example.
+Never commit keys, secrets or `.env` files to GitHub. If a model call fails, the agents fall back to rules and say so in the trace.
+
 
 ## Architecture
 
 ```
 Synthetic event generator (seeded Python)
-  -> deterministic analytics + windowed tactical rules (auditable evidence IDs)
-  -> FastAPI /api/state, /api/events
-  -> Next.js live dashboard, modes, timeline
-  -> optional /api/narrate through Azure OpenAI deployment
+  -> deterministic analytics (auditable evidence IDs)       -> /api/state, /api/events
+  -> Microsoft Agent Framework workflow                     -> /api/analyze
+       Orchestrator  plans the minute window, team and metrics from the question
+       Stats         computes window stats from the event log (tool, no model)
+       Tactics       proposes comparative claims with evidence IDs (Foundry model or rules)
+       Skeptic       recomputes every claim in code: verified / corrected / rejected
+                     -> rejected claims go back to Tactics for one revision round
+       Narrator      explains only verified claims (Foundry model or template);
+                     a grounding guard blocks any number not found in a verified claim
+  -> Next.js dashboard: live timeline, intelligence desk, Agent room with trace
 ```
 
-## Next phase for a credible competition entry
+Models may draft claims and wording, but they never supply numbers: every figure a viewer sees is recomputed from the event log, and no agent can read events after the current minute.
 
-- Replace single-step narration with **specialized cooperating agents**: tactical analyst, evidence checker, broadcast storyteller.
-- Wire model orchestration into Microsoft Agent Framework / Foundry with logged handoffs and retries.
-- Validate generated claims against evidence IDs; reject ungrounded stats.
-- Upgrade data realism (possessions/durations, field positions, passing networks, momentum methodology).
-- Add multilingual outputs, overlay-ready JSON, and optional real-time Server-Sent Events.
-- Deploy a free-to-access demo, film a <2-minute video, and publish public GitHub repo before deadline.
+
+## Next steps before submission
+
+- Run the agents against a real Foundry deployment and tune the Tactics prompt.
+- Deploy (Azure Container Apps for the API, Container Apps or Static Web Apps for the frontend).
+- Film the under-2-minute demo around a rejected claim being revised in the Agent room.
+
 
 ## Integrity and limitations
 

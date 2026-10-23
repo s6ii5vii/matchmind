@@ -24,6 +24,21 @@ type MatchState = {
   observed_event_count: number; method: string;
 };
 type Flash = { side: Side; player: string; clock: string; key: number };
+type Verdict = "verified" | "corrected" | "rejected" | "pending";
+type Claim = {
+  id: string; team: Side; metric: string; start: number; end: number; value: number;
+  text: string; evidence_ids: string[]; proposed_by: string; revision_of: string | null;
+  verdict: Verdict; reason: string;
+};
+type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
+type Analysis = {
+  engine: "foundry" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
+  claims: Claim[]; trace: TraceStep[]; minute: number;
+};
+
+const AGENTS = ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"];
+const VERDICT_LABEL: Record<Verdict, string> = { verified: "Verified", corrected: "Corrected", rejected: "Rejected", pending: "Pending" };
+const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
 
 const descriptions: Record<string, string> = {
   pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Turnover",
@@ -66,8 +81,9 @@ export default function Home() {
   const [filter, setFilter] = useState<Filter>("all");
   const [data, setData] = useState<MatchState | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [recap, setRecap] = useState("");
-  const [recapStatus, setRecapStatus] = useState<"idle" | "loading" | "ai" | "error">("idle");
+  const [question, setQuestion] = useState("");
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error">("idle");
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
 
@@ -114,22 +130,19 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [playing]);
   useEffect(() => { if (minute === 90) setPlaying(false); }, [minute]);
-  useEffect(() => { setRecap(""); setRecapStatus("idle"); }, [minute, mode, focus]);
-
-  const aiRecap = useCallback(async () => {
-    setRecapStatus("loading");
+  const runAgents = useCallback(async (q: string) => {
+    setPlaying(false);
+    setAnalysisStatus("loading");
     try {
-      const response = await fetch("/api/narrate", {
+      const response = await fetch("/api/analyze", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minute, mode, focus }),
+        body: JSON.stringify({ minute, mode, focus, question: q }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Could not reach the configured model.");
-      setRecap(result.text);
-      setRecapStatus("ai");
-    } catch (err) {
-      setRecap(err instanceof Error ? err.message : "Unknown narration error");
-      setRecapStatus("error");
+      if (!response.ok) throw new Error(`API returned ${response.status}`);
+      setAnalysis((await response.json()) as Analysis);
+      setAnalysisStatus("idle");
+    } catch {
+      setAnalysisStatus("error");
     }
   }, [minute, mode, focus]);
 
@@ -159,7 +172,7 @@ export default function Home() {
       <header className="header">
         <div className="brand"><span className="brand-icon">m</span><span>matchmind</span></div>
         <div className="header-right">
-          <span className="header-meta">Build 0.1 — synthetic data</span>
+          <span className="header-meta">Build 0.2 — synthetic data</span>
           <button className="icon-btn" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle theme">
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
@@ -301,22 +314,73 @@ export default function Home() {
               </article>
             )) : <div className="empty">{data ? "No insights at this minute." : "Fetching verified match context…"}</div>}
           </div>
-          <div className="ai-module">
-            <div><strong>Microsoft Foundry commentary</strong><small>Optional LLM narration, grounded in the current stats</small></div>
-            <button disabled={recapStatus === "loading"} onClick={aiRecap}>{recapStatus === "loading" ? "Generating…" : "Generate AI recap ↗"}</button>
-          </div>
-          {recap && (
-            <div className={`recap-box ${recapStatus}`}>
-              <b>{recapStatus === "ai" ? "FOUNDRY NARRATIVE" : "CONFIGURATION REQUIRED"}</b>
-              <p>{recap}</p>
-            </div>
-          )}
         </section>
       </div>
 
+      <section className="surface agent-room">
+        <div className="panel-head">
+          <h2><span className="section-numeral">03</span>Agent room</h2>
+          <span className="panel-meta">
+            {analysis ? `${analysis.engine === "foundry" ? "Microsoft Foundry" : "Rule-based"} agents · minute ${analysis.minute}` : "Five agents · every claim checked"}
+          </span>
+        </div>
+        <form className="ask" onSubmit={(e) => { e.preventDefault(); runAgents(question); }}>
+          <input
+            value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={300}
+            placeholder={`Ask about the match so far (minute ${minute})…`} aria-label="Question for the agents"
+          />
+          <button type="submit" disabled={analysisStatus === "loading" || minute === 0}>
+            {analysisStatus === "loading" ? "Agents working…" : question.trim() ? "Ask the agents" : "Analyse this moment"}
+          </button>
+        </form>
+        <div className="suggestions">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} type="button" onClick={() => { setQuestion(s); runAgents(s); }} disabled={analysisStatus === "loading" || minute === 0}>{s}</button>
+          ))}
+        </div>
+        {analysisStatus === "error" && <div className="recap-box error"><b>AGENTS UNAVAILABLE</b><p>Couldn&apos;t reach the analysis service. Check the backend is running.</p></div>}
+        {!analysis && analysisStatus !== "error" && (
+          <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "Orchestrator → Stats → Tactics → Skeptic → Narrator. Ask a question or analyse this moment."}</div>
+        )}
+        {analysis && (
+          <div className="room-grid">
+            <div>
+              <div className="recap-box ai">
+                <b>{analysis.narrative_source === "foundry" ? "NARRATOR · FOUNDRY MODEL" : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+                <p>{analysis.narrative}</p>
+              </div>
+              <div className="claims">
+                {analysis.claims.map((c) => (
+                  <article key={c.id} className={`claim ${c.verdict}`}>
+                    <div className="claim-top">
+                      <span className={`verdict ${c.verdict}`}>{VERDICT_LABEL[c.verdict]}</span>
+                      <span>{c.id}{c.revision_of ? ` · revises ${c.revision_of}` : ""}</span>
+                    </div>
+                    <h3>{c.text}</h3>
+                    <p>{c.reason}</p>
+                    {c.verdict !== "rejected" && c.evidence_ids.length > 0 && (
+                      <div className="evidence"><b>SOURCE EVENTS</b>{c.evidence_ids.join(" · ")}</div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+            <ol className="trace" aria-label="Agent trace">
+              {analysis.trace.map((t, i) => (
+                <li key={i} className={`trace-step ${t.status}`}>
+                  <span className={`agent-tag a${AGENTS.indexOf(t.agent)}`}>{t.agent}</span>
+                  <strong>{t.action}</strong>
+                  <small>{t.detail}</small>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </section>
+
       <section className="surface stats-panel">
         <div className="panel-head">
-          <h2><span className="section-numeral">03</span>Match by the numbers</h2>
+          <h2><span className="section-numeral">04</span>Match by the numbers</h2>
           <span className="panel-meta">Cumulative · through {minute}&apos;</span>
         </div>
         <div className="stat-heading"><span>{home?.abbr ?? "NBR"}</span><span>METRIC</span><span>{away?.abbr ?? "RSU"}</span></div>
@@ -338,7 +402,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>MATCHMIND / v0.1</span>
+        <span>MATCHMIND / v0.2</span>
         <span>ALL CLUBS, PLAYERS, EVENTS AND xG ARE FICTIONAL · NO ACTUAL LEAGUE FOOTAGE</span>
         <span>EXPLAINABILITY FIRST</span>
       </footer>

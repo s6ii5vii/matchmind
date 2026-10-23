@@ -225,4 +225,45 @@ footer { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wr
   .event-item code { display: none; }
   .ai-module { flex-wrap: wrap; }
 }
+/* agent room */
+.agent-room { margin-top: 20px; }
+.ask { display: flex; gap: 10px; margin: 0 28px 12px; }
+.ask input { flex: 1; min-width: 0; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-2); color: var(--ink); font: 400 14px var(--sans); }
+.ask input:focus { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.ask button, .suggestions button { border: 1px solid var(--line-strong); background: transparent; color: var(--ink); padding: 11px 18px; border-radius: 999px; font: 500 13px var(--sans); white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+.ask button:hover:not(:disabled), .suggestions button:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.ask button:disabled, .suggestions button:disabled { opacity: .5; cursor: not-allowed; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 28px 20px; }
+.suggestions button { padding: 6px 12px; font-size: 12px; color: var(--muted); }
+.agent-room > .empty, .agent-room > .recap-box { margin-left: 28px; margin-right: 28px; }
+.room-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 28px; padding: 0 28px 28px; }
+.room-grid .recap-box { margin: 0 0 8px; }
+.claim { padding: 16px 0; border-top: 1px solid var(--line); animation: rise .3s ease-out; }
+.claim h3 { font: 400 21px/1.15 var(--serif); margin: 6px 0; }
+.claim p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.claim.rejected h3 { text-decoration: line-through; text-decoration-color: var(--away); color: var(--muted); }
+.claim-top { display: flex; justify-content: space-between; gap: 12px; font: 400 11px var(--mono); color: var(--faint); letter-spacing: .06em; }
+.verdict { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.verdict.verified { color: var(--accent-text); }
+.verdict.corrected { color: #c48a00; }
+.verdict.rejected { color: var(--away); }
+.trace { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 1px solid var(--line-strong); }
+.trace-step { position: relative; padding: 0 0 16px; animation: rise .3s ease-out both; }
+.trace-step::before { content: ""; position: absolute; left: -23px; top: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong); }
+.trace-step.ok::before { background: var(--accent-text); border-color: var(--accent-text); }
+.trace-step.warn::before { background: #c48a00; border-color: #c48a00; }
+.trace-step.reject::before { background: var(--away); border-color: var(--away); }
+.trace-step strong { display: block; font: 500 13px/1.4 var(--sans); margin-top: 4px; }
+.trace-step small { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 2px; }
+.agent-tag { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+.agent-tag.a3 { color: var(--away); }
+.agent-tag.a2 { color: var(--home); }
+.agent-tag.a4 { color: var(--accent-text); }
+@media (max-width: 960px) { .room-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .ask, .suggestions, .agent-room > .empty, .agent-room > .recap-box { margin-left: 18px; margin-right: 18px; }
+  .room-grid { padding: 0 18px 22px; }
+  .ask { flex-direction: column; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
