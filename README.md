@@ -81,4 +81,4 @@ The simulator is calibrated against [StatsBomb Open Data](https://github.com/sta
 | Fouls | 25 | 31 |
 | Possessions | 183 | 219 |
 
-No real Premier League data or footage ships with MatchMind, and xG values are illustrative, not a trained model.
+The match itself is in [`data/`](data/) as CSV (opens in Excel) and JSON, with a guide to every column. No real Premier League data or footage ships with MatchMind, and xG values are illustrative, not a trained model.
