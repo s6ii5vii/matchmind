@@ -119,6 +119,8 @@ export default function Home() {
   const [pick, setPick] = useState<{ a: string; b: string }>({ a: "", b: "" });
   const [duel, setDuel] = useState<Duel | null>(null);
   const [moments, setMoments] = useState<Moment[]>([]);
+  const [provider, setProvider] = useState<Analysis["engine"]>("offline");
+  const aboutRef = useRef<HTMLDialogElement>(null);
   const [momentId, setMomentId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
@@ -174,6 +176,13 @@ export default function Home() {
       .catch(() => {});
     return () => controller.abort();
   }, [minute]);
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((res) => res.json())
+      .then((config: { model_provider: Analysis["engine"] }) => setProvider(config.model_provider))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -639,8 +648,65 @@ export default function Home() {
       <footer>
         <span>MATCHMIND / v0.3</span>
         <span>ALL CLUBS, PLAYERS, EVENTS AND xG ARE FICTIONAL · NO ACTUAL LEAGUE FOOTAGE</span>
-        <span>EXPLAINABILITY FIRST</span>
+        <button className="about-link" onClick={() => aboutRef.current?.showModal()}>How MatchMind works →</button>
       </footer>
+
+      <dialog ref={aboutRef} className="about" aria-labelledby="about-title" onClick={(e) => { if (e.target === e.currentTarget) aboutRef.current?.close(); }}>
+        <div className="about-inner">
+          <div className="about-head">
+            <h2 id="about-title">How MatchMind works</h2>
+            <button className="icon-btn" onClick={() => aboutRef.current?.close()} aria-label="Close">✕</button>
+          </div>
+
+          <p className="about-lead">
+            Football is full of confident takes. MatchMind checks them. Five AI agents watch a match with you: a Pundit says what
+            everyone&apos;s thinking, a Skeptic checks every take against every pass, tackle and shot, and a Narrator tells you
+            what holds up, in plain English or in detail.
+          </p>
+
+          <h3>The five agents</h3>
+          <ol className="about-agents">
+            <li><b>Orchestrator</b> turns your question into a team, a stretch of minutes and the stats to check, and spots any assumption in it.</li>
+            <li><b>Stats</b> counts everything that happened in that stretch, straight from the event log.</li>
+            <li><b>Pundit</b> gives confident takes from what a viewer just saw, without the stats. Usually right, sometimes caught out by recency bias.</li>
+            <li><b>Skeptic</b> checks every take against the whole stretch: holds up, half-right, not enough evidence, or doesn&apos;t hold up. Busted takes go back to the Pundit for a rethink. It&apos;s code, not AI, so it can&apos;t be talked round.</li>
+            <li><b>Narrator</b> writes the answer from the checked takes only. A guard throws out any answer that quotes a number the Skeptic didn&apos;t produce.</li>
+          </ol>
+          <p>The agents only ever see events up to the current minute, so nothing comes from the future. Open <i>How the agents got here</i> under any answer to see every step.</p>
+
+          <h3>The player rating</h3>
+          <p>
+            Ratings out of 10 that ask who drove the moments that mattered and who caused the bad ones. Every move ending in a shot
+            shares its value between the shooter, the player who set it up and the rest of the move; every chance the opponent gets
+            straight after a player loses the ball counts against that player. That&apos;s how a defender can outrate a goalscorer.
+          </p>
+
+          <h3>The match</h3>
+          <p>
+            Northbridge City and Riverside United are fictional. The match is simulated pass by pass (about 1,500 events) and
+            calibrated against real Premier League averages from StatsBomb Open Data: shots, xG, passing, pressing, tackles and
+            possession all land close to a real game. No real Premier League data or footage is used.
+          </p>
+
+          <h3>Built with</h3>
+          <ul className="about-stack">
+            <li><b>Microsoft Agent Framework</b> orchestrates the five agents as a workflow, streamed live to this page.</li>
+            <li><b>Azure Container Apps</b> hosts the app: one container serving the site and the API.</li>
+            <li><b>GitHub Actions</b> runs the tests and builds the container on every change; GitHub&apos;s container registry stores it.</li>
+            <li>
+              <b>AI models:</b>{" "}
+              {provider === "offline" ? "rule-based agents right now (no model key set)." : `${ENGINE_LABEL[provider]} right now.`}{" "}
+              The agents can run on Microsoft Foundry or Nebius Token Factory by changing three settings.
+            </li>
+            <li><b>FastAPI</b> (Python) for the agents and stats, <b>Next.js</b> for this page.</li>
+          </ul>
+
+          <p className="about-foot">
+            Built for Inside the Game: the Microsoft Premier League Hackathon 2026 ·{" "}
+            <a href="https://github.com/s6ii5vii/matchmind" target="_blank" rel="noreferrer">Source code on GitHub ↗</a>
+          </p>
+        </div>
+      </dialog>
     </main>
   );
 }
