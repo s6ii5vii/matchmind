@@ -112,6 +112,11 @@ class ProviderTests(unittest.TestCase):
     def test_nebius_key_selects_nebius(self):
         self.assertEqual(self.provider({"NEBIUS_API_KEY": "k"}), "nebius")
 
+    def test_placeholders_from_env_example_are_ignored(self):
+        placeholders = {"AZURE_OPENAI_ENDPOINT": "https://YOUR-RESOURCE.openai.azure.com",
+                        "AZURE_OPENAI_API_KEY": "YOUR_SECRET_API_KEY", "AZURE_OPENAI_DEPLOYMENT": "YOUR-DEPLOYMENT-NAME"}
+        self.assertEqual(self.provider({**placeholders, "NEBIUS_API_KEY": "k"}), "nebius")
+
     def test_foundry_preferred_unless_overridden(self):
         both = {**AZURE, "NEBIUS_API_KEY": "k"}
         self.assertEqual(self.provider(both), "foundry")

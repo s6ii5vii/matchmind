@@ -21,12 +21,18 @@ NEBIUS_DEFAULT_MODEL = "openai/gpt-oss-120b"
 PROVIDERS = ("foundry", "nebius")
 
 
+def _is_set(name: str) -> bool:
+    """True for a real value; the YOUR-... placeholders copied from .env.example don't count."""
+    value = os.environ.get(name, "").strip()
+    return bool(value) and "YOUR" not in value
+
+
 def configured_provider() -> str:
     """Which model provider to use: MATCHMIND_PROVIDER if set, else the first one configured."""
     configured = {
-        "foundry": all(os.environ.get(k) for k in
+        "foundry": all(_is_set(k) for k in
                        ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT")),
-        "nebius": bool(os.environ.get("NEBIUS_API_KEY")),
+        "nebius": _is_set("NEBIUS_API_KEY"),
     }
     preferred = os.environ.get("MATCHMIND_PROVIDER", "").lower()
     if configured.get(preferred):
