@@ -57,5 +57,19 @@ class RealismTests(unittest.TestCase):
                 self.assertLess(abs(ours[stat] - real) / real, 0.40, f"{stat}: ours {ours[stat]:.1f}, real {real}")
 
 
+class ExportTests(unittest.TestCase):
+    def test_data_files_match_the_simulator(self):
+        """data/ is what judges and teammates open; it must be the match the app actually uses."""
+        import csv
+        import json
+        from app.export import DATA_DIR, match_json
+        with open(DATA_DIR / "match.json") as f:
+            self.assertEqual(json.load(f), json.loads(json.dumps(match_json())),
+                             "data/ is stale: run `python -m app.export` from backend/")
+        with open(DATA_DIR / "match_events.csv") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual([r["id"] for r in rows], [e["id"] for e in EVENTS])
+
+
 if __name__ == "__main__":
     unittest.main()
