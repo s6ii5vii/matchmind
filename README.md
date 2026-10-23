@@ -4,6 +4,8 @@
 
 Built for **Inside the Game: Microsoft Premier League Hackathon 2026**, targeting **Best Multi-Agent System**.
 
+**Try it live:** https://matchmind.politesky-f0495435.swedencentral.azurecontainerapps.io (runs on Azure Container Apps; the first visit after a quiet spell can take a few seconds to wake up)
+
 ## What you can do
 
 | Feature | What it does |
