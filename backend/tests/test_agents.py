@@ -1,10 +1,12 @@
 import asyncio
+import os
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from app.agents import run_analysis
-from app.agents.llm import ungrounded_numbers
+from app.agents.llm import configured_provider, model_client, ungrounded_numbers
 from app.agents.models import Claim, Job
 from app.agents.tools import verify_claim, window_stats
 from app.main import app
@@ -93,6 +95,33 @@ class GroundingGuardTests(unittest.TestCase):
         ok = f"Northbridge City pressed {verified.value:g} times to {verified.compare_value:g}."
         self.assertEqual(ungrounded_numbers(ok, job, [verified]), [])
         self.assertEqual(ungrounded_numbers("They won 37 duels.", job, [verified]), ["37"])
+
+
+AZURE = {"AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com", "AZURE_OPENAI_API_KEY": "k",
+         "AZURE_OPENAI_DEPLOYMENT": "d"}
+
+
+class ProviderTests(unittest.TestCase):
+    def provider(self, env):
+        with mock.patch.dict(os.environ, env, clear=True):
+            return configured_provider()
+
+    def test_offline_without_credentials(self):
+        self.assertEqual(self.provider({}), "offline")
+
+    def test_nebius_key_selects_nebius(self):
+        self.assertEqual(self.provider({"NEBIUS_API_KEY": "k"}), "nebius")
+
+    def test_foundry_preferred_unless_overridden(self):
+        both = {**AZURE, "NEBIUS_API_KEY": "k"}
+        self.assertEqual(self.provider(both), "foundry")
+        self.assertEqual(self.provider({**both, "MATCHMIND_PROVIDER": "nebius"}), "nebius")
+
+    def test_nebius_client_is_built(self):
+        with mock.patch.dict(os.environ, {"NEBIUS_API_KEY": "k"}, clear=True):
+            client, provider = model_client()
+        self.assertEqual(provider, "nebius")
+        self.assertIsNotNone(client)
 
 
 class ApiTests(unittest.TestCase):

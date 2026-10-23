@@ -32,10 +32,11 @@ type Claim = {
 };
 type TraceStep = { agent: string; action: string; detail: string; status: "info" | "ok" | "warn" | "reject" };
 type Analysis = {
-  engine: "foundry" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
+  engine: "foundry" | "nebius" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
   claims: Claim[]; trace: TraceStep[]; minute: number;
 };
 
+const ENGINE_LABEL: Record<Analysis["engine"], string> = { foundry: "Microsoft Foundry", nebius: "Nebius Token Factory", offline: "Rule-based" };
 const AGENTS = ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"];
 const VERDICT_LABEL: Record<Verdict, string> = { verified: "Verified", corrected: "Corrected", rejected: "Rejected", pending: "Pending" };
 const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
@@ -321,7 +322,7 @@ export default function Home() {
         <div className="panel-head">
           <h2><span className="section-numeral">03</span>Agent room</h2>
           <span className="panel-meta">
-            {analysis ? `${analysis.engine === "foundry" ? "Microsoft Foundry" : "Rule-based"} agents · minute ${analysis.minute}` : "Five agents · every claim checked"}
+            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every claim checked"}
           </span>
         </div>
         <form className="ask" onSubmit={(e) => { e.preventDefault(); runAgents(question); }}>
@@ -346,7 +347,7 @@ export default function Home() {
           <div className="room-grid">
             <div>
               <div className="recap-box ai">
-                <b>{analysis.narrative_source === "foundry" ? "NARRATOR · FOUNDRY MODEL" : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+                <b>{analysis.narrative_source === "model" ? `NARRATOR · ${ENGINE_LABEL[analysis.engine].toUpperCase()} MODEL` : "NARRATOR"} · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
                 <p>{analysis.narrative}</p>
               </div>
               <div className="claims">

@@ -1,12 +1,11 @@
 """MatchMind MVP REST API. Start: uvicorn app.main:app --reload --port 8000"""
 
-import os
-
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .agents import foundry_client, run_analysis
+from .agents import model_client, run_analysis
+from .agents.llm import configured_provider
 from .analysis import build_state
 from .synthetic import EVENTS, TEAMS
 
@@ -35,9 +34,7 @@ def config():
     return {
         "teams": TEAMS,
         "total_events": len(EVENTS),
-        "foundry_configured": bool(os.environ.get("AZURE_OPENAI_ENDPOINT") and
-                                   os.environ.get("AZURE_OPENAI_API_KEY") and
-                                   os.environ.get("AZURE_OPENAI_DEPLOYMENT")),
+        "model_provider": configured_provider(),
         "agents": ["Orchestrator", "Stats", "Tactics", "Skeptic", "Narrator"],
     }
 
@@ -60,8 +57,9 @@ def state(
 async def analyze(body: AnalyzeRequest):
     """Run the multi-agent workflow (Orchestrator, Stats, Tactics, Skeptic, Narrator).
 
-    Uses Microsoft Foundry models when configured, otherwise rule-based agents. Either way every
+    Uses Microsoft Foundry or Nebius Token Factory models when configured, otherwise rule-based agents. Either way every
     claim is re-verified against the event log, and the full agent trace is returned.
     """
-    result = await run_analysis(body.minute, body.mode, body.focus, body.question, client=foundry_client())
+    client, provider = model_client()
+    result = await run_analysis(body.minute, body.mode, body.focus, body.question, client=client, provider=provider)
     return {"synthetic": True, **result}
