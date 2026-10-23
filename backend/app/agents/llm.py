@@ -15,7 +15,7 @@ from ..synthetic import TEAMS
 from .models import METRIC_LABELS, Claim, Job
 from .tools import EVENTS_BY_ID, window_events, window_stats
 
-API_VERSION = "2024-10-21"
+API_VERSION = "2025-04-01-preview"  # GPT-5 family needs 2025-04-01-preview or later
 NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 NEBIUS_DEFAULT_MODEL = "openai/gpt-oss-120b"
 PROVIDERS = ("foundry", "nebius")
