@@ -1,10 +1,9 @@
 """Deterministic tools the agents call. Numbers only ever come from here, never from a model."""
 
 from ..analysis import LOST_BALL, RECOVERY, _team_stats, final_third
-from ..synthetic import EVENTS, TEAMS
+from ..synthetic import EVENTS, EVENTS_BY_ID, TEAMS, label, span
 from .models import METRIC_LABELS, Claim
 
-EVENTS_BY_ID = {e["id"]: e for e in EVENTS}
 TOLERANCE = {"xg": 0.05, "pass_accuracy": 2.0, "possession": 3.0}
 MIN_PASSES_FOR_ACCURACY = 4
 MIN_SAMPLE = 3  # combined events (or shots, for xG) needed before a comparison means anything
@@ -89,14 +88,14 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
             or claim.relation not in ("more", "less") or claim.compare not in ("opponent", "previous")):
         return verdict("rejected", "Malformed claim: unknown team, metric, relation or comparison.")
     if claim.end > minute:
-        return verdict("rejected", f"Refers to minute {claim.end}, but only {minute} minutes have been played.")
+        return verdict("rejected", f"Refers to {label(claim.end)}, but the match is only at {label(minute)}.")
     if not 1 <= claim.start <= claim.end:
         return verdict("rejected", "Invalid minute window.")
 
-    team_name, label = TEAMS[claim.team]["name"], METRIC_LABELS[claim.metric]
+    team_name, metric = TEAMS[claim.team]["name"], METRIC_LABELS[claim.metric]
     actual = _metric(claim.team, claim.metric, claim.start, claim.end)
     if actual is None:
-        return verdict("unproven", f"Too few passes by {team_name} in minutes {claim.start}-{claim.end} "
+        return verdict("unproven", f"Too few passes by {team_name} in {span(claim.start, claim.end)} "
                                    "to judge accuracy.")
 
     if claim.compare == "opponent":
@@ -114,9 +113,9 @@ def verify_claim(claim: Claim, minute: int) -> Claim:
     claim.actual_value, claim.compare_value = actual, baseline
     if claim.compare == "opponent":
         claim.finding = (f"{team_name} {_fmt(claim.metric, actual)} vs {TEAMS[other(claim.team)]['name']} "
-                         f"{_fmt(claim.metric, baseline)} {label}, minutes {claim.start}-{claim.end}.")
+                         f"{_fmt(claim.metric, baseline)} {metric}, {span(claim.start, claim.end)}.")
     else:
-        claim.finding = (f"{team_name} {label}: {_fmt(claim.metric, actual)} in minutes {claim.start}-{claim.end}, "
+        claim.finding = (f"{team_name} {metric}: {_fmt(claim.metric, actual)} in {span(claim.start, claim.end)}, "
                          f"{_fmt(claim.metric, baseline)} in the {claim.end - claim.start + 1} minutes before.")
     if claim.metric == "xg":  # xG sums are always non-zero-ish; judge the sample by shot count
         sample = _metric(claim.team, "shots", claim.start, claim.end) + baseline_shots

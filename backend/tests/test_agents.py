@@ -13,33 +13,37 @@ from app.agents.tools import verify_claim, window_stats
 from app.main import app
 from app.moments import key_moments
 from app.players import compare, ranking
-from app.synthetic import EVENTS
+from app.synthetic import EVENTS, MATCHES, match_meta, minute_of, tidy, use_match
+
+
+NOW = minute_of(75)  # 75' on the clock: Northbridge's pressing spell
+START = minute_of(66)
 
 
 def claim(**overrides) -> Claim:
-    base = dict(id="T1", team="home", metric="pressures", start=61, end=70,
-                value=window_stats("home", 61, 70)["pressures"], relation="more", compare="opponent",
+    base = dict(id="T1", team="home", metric="pressures", start=START, end=NOW,
+                value=window_stats("home", START, NOW)["pressures"], relation="more", compare="opponent",
                 text="Northbridge City is out-pressing Riverside United")
     return Claim(**{**base, **overrides})
 
 
 class SkepticTests(unittest.TestCase):
     def test_verifies_true_claim(self):
-        self.assertEqual(verify_claim(claim(), 70).verdict, "verified")
+        self.assertEqual(verify_claim(claim(), NOW).verdict, "verified")
 
     def test_rejects_future_window(self):
-        result = verify_claim(claim(end=75), 70)
+        result = verify_claim(claim(end=NOW + 5), NOW)
         self.assertEqual(result.verdict, "rejected")
-        self.assertIn("only 70 minutes", result.reason)
+        self.assertIn("only at", result.reason)
 
     def test_rejects_false_direction(self):
-        self.assertEqual(verify_claim(claim(team="away"), 70).verdict, "rejected")
+        self.assertEqual(verify_claim(claim(team="away"), NOW).verdict, "rejected")
 
     def test_corrects_wrong_number_and_bad_evidence(self):
         away_shot = next(e["id"] for e in EVENTS if e["team"] == "away" and e["type"] == "shot")
-        result = verify_claim(claim(value=99, evidence_ids=[away_shot]), 70)
+        result = verify_claim(claim(value=99, evidence_ids=[away_shot]), NOW)
         self.assertEqual(result.verdict, "corrected")
-        self.assertEqual(result.value, window_stats("home", 61, 70)["pressures"])
+        self.assertEqual(result.value, window_stats("home", START, NOW)["pressures"])
         self.assertNotIn(away_shot, result.evidence_ids)
         self.assertTrue(result.evidence_ids)
 
@@ -48,7 +52,7 @@ class SkepticTests(unittest.TestCase):
         self.assertEqual(verify_claim(tiny, 3).verdict, "unproven")
 
     def test_finding_states_what_the_data_shows(self):
-        result = verify_claim(claim(team="away"), 70)
+        result = verify_claim(claim(team="away"), NOW)
         self.assertIn("Riverside United", result.finding)
         self.assertIn("Northbridge City", result.finding)
 
@@ -92,7 +96,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreater(busted, 0)  # but not always right either, or the Skeptic has nothing to do
 
     def test_question_assumption_is_checked_first(self):
-        result = self.run_job(70, "fan", "home", "Why did Riverside lose control after 60?")
+        result = self.run_job(minute_of(80), "fan", "home", "Why did Riverside lose control after 60?")
         premise = result["claims"][0]
         self.assertTrue(premise["premise"])
         self.assertEqual(premise["team"], "away")
@@ -107,6 +111,41 @@ class WorkflowTests(unittest.TestCase):
         result = self.run_job(60, "fan", "home", "What did Riverside do between 20 and 35?")
         self.assertEqual(result["window"], [20, 35])
         self.assertEqual(result["focus"], "away")
+
+    def test_question_minutes_are_football_minutes(self):
+        """ "after 60" means 60' on the clock, which comes later on the timeline because of first-half added time."""
+        result = self.run_job(80, "fan", "home", "What did Riverside do after 60?")
+        self.assertEqual(result["window"], [minute_of(60), 80])
+        self.assertEqual(result["window_label"].split("–")[0], "60'")
+        added = self.run_job(50, "fan", "home", "What happened between 45+1 and 45+2?")
+        self.assertEqual(added["window"], [46, 47])
+
+    def test_halves_include_added_time(self):
+        first = self.run_job(match_meta()["length"], "fan", "home", "How did the first half go?")
+        self.assertEqual(first["window"], [1, match_meta()["first_half"]])
+        second = self.run_job(match_meta()["length"], "fan", "home", "How did the second half go?")
+        self.assertEqual(second["window"], [match_meta()["first_half"] + 1, match_meta()["length"]])
+
+    def test_every_match_can_be_analysed(self):
+        for match_id, spec in MATCHES.items():
+            with self.subTest(match=match_id):
+                result = self.run_job(70, "fan", "away", spec.questions[1], match=match_id)
+                self.assertEqual(result["match"], match_id)
+                self.assertTrue(result["narrative"])
+                with use_match(match_id):
+                    ids = {e["id"] for e in EVENTS if e["minute"] <= 70}
+                for c in result["claims"]:
+                    self.assertTrue(set(c["evidence_ids"]) <= ids)
+
+    def test_slow_model_falls_back_to_rules(self):
+        async def slow(*args, **kwargs):
+            await asyncio.sleep(5)
+        with mock.patch("app.agents.workflow.MODEL_TIMEOUT", 0.05), \
+                mock.patch("app.agents.llm.propose", slow), mock.patch("app.agents.llm.narrate", slow):
+            result = self.run_job(70, "fan", "home", client=object(), provider="nebius")
+        self.assertEqual(result["engine"], "offline")
+        self.assertTrue(any(t["detail"] == "Model took too long" for t in result["trace"]))
+        self.assertTrue(result["narrative"])
 
     def test_question_about_future_is_clamped(self):
         result = self.run_job(30, "fan", "home", "What happened in the second half?")
@@ -126,7 +165,7 @@ class KeyMomentTests(unittest.TestCase):
         self.assertEqual([m["kind"] for m in key_moments(17)].count("goal"), 0)
 
     def test_goals_have_a_story_and_a_replay_path(self):
-        goals = [m for m in key_moments(90) if m["kind"] == "goal"]
+        goals = [m for m in key_moments(match_meta()["length"]) if m["kind"] == "goal"]
         self.assertEqual(len(goals), 3)
         for m in goals:
             self.assertTrue(m["creator"])
@@ -135,11 +174,17 @@ class KeyMomentTests(unittest.TestCase):
             self.assertIn(m["shooter"], m["title"])
 
     def test_ask_about_a_moment_looks_at_the_minutes_before_it(self):
-        moment = next(m for m in key_moments(90) if m["minute"] == 72)
+        moment = next(m for m in key_moments(90) if m["label"] == "72'")
+        self.assertEqual(moment["question"], "What led to Northbridge City's goal at 72'?")
         result = asyncio.run(run_analysis(90, "fan", "home", moment["question"]))
-        self.assertEqual(result["window"], [63, 72])
+        self.assertEqual(result["window"], [minute_of(63), minute_of(72)])
         self.assertTrue(result["narrative"].startswith("At 71:36, I. Brown gave the ball away"))
         self.assertIn("A. Okafor scored", result["narrative"])
+
+    def test_saves_name_the_keeper(self):
+        with use_match("hollowmere-stanton"):
+            saved = [m for m in key_moments(match_meta()["length"]) if m["title"].endswith("E. Kowal")]
+        self.assertTrue(saved)
 
     def test_asking_about_a_moment_that_has_not_happened_says_nothing_about_it(self):
         result = asyncio.run(run_analysis(60, "fan", "home", "What led to Northbridge City's goal at 72?"))
@@ -158,8 +203,8 @@ class PunditWordingTests(unittest.TestCase):
 
 class GroundingGuardTests(unittest.TestCase):
     def test_flags_invented_numbers(self):
-        job = Job(minute=70, mode="fan", focus="home", window=(61, 70))
-        verified = verify_claim(claim(), 70)
+        job = Job(minute=NOW, mode="fan", focus="home", window=(START, NOW))
+        verified = verify_claim(claim(), NOW)
         ok = f"Northbridge City pressed {verified.value:g} times to {verified.compare_value:g}."
         self.assertEqual(ungrounded_numbers(ok, job, [verified]), [])
         self.assertEqual(ungrounded_numbers("They won 37 duels.", job, [verified]), ["37"])
@@ -199,8 +244,8 @@ class ProviderTests(unittest.TestCase):
 
 class PlayerRatingTests(unittest.TestCase):
     def test_rating_only_uses_events_so_far(self):
-        before = {p["name"]: p for p in ranking(71)}
-        after = {p["name"]: p for p in ranking(73)}
+        before = {p["name"]: p for p in ranking(minute_of(71))}
+        after = {p["name"]: p for p in ranking(minute_of(73))}
         self.assertEqual(before["A. Okafor"]["counts"]["goals"], 0)  # scores at 71:36 (72nd minute)
         self.assertEqual(after["A. Okafor"]["counts"]["goals"], 1)
         self.assertGreater(after["A. Okafor"]["rating"], before["A. Okafor"]["rating"])
@@ -227,6 +272,19 @@ class PlayerRatingTests(unittest.TestCase):
         scorers = [p for p in players if p["counts"]["goals"]]
         self.assertGreaterEqual(best_defender["rating"], min(p["rating"] for p in scorers))
 
+    def test_keepers_are_credited_for_saves(self):
+        with use_match("hollowmere-stanton"):
+            keeper = next(p for p in ranking(match_meta()["length"]) if p["name"] == "E. Kowal")
+        self.assertGreaterEqual(keeper["counts"]["saves"], 3)
+        self.assertGreater(keeper["values"]["defending"], 3)
+        self.assertGreater(keeper["rating"], 6.5)
+
+    def test_substitutes_only_appear_once_they_come_on(self):
+        on = {e["receiver"]: e["minute"] for e in EVENTS if e["type"] == "substitution"}
+        for minute in (40, 70, match_meta()["length"]):
+            names = {p["name"] for p in ranking(minute)}
+            self.assertEqual({n for n in on if n in names}, {n for n, m in on.items() if m <= minute})
+
     def test_compare_explains_the_difference(self):
         result = compare("A. Okafor", "I. Brown", 90)
         self.assertEqual(result["winner"], "A. Okafor")
@@ -236,6 +294,11 @@ class PlayerRatingTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def setUp(self):
+        from app import main
+        main._recent.clear()
+        main._answers.clear()
+
     @mock.patch.dict(os.environ, {}, clear=True)  # rule-based agents, even if a local .env has keys
     def test_analyze_endpoint(self):
         res = TestClient(app).post("/api/analyze", json={"minute": 70, "mode": "fan", "focus": "home",
@@ -266,7 +329,8 @@ class ApiTests(unittest.TestCase):
     def test_players_and_compare_endpoints(self):
         client = TestClient(app)
         players = client.get("/api/players?minute=60").json()["players"]
-        self.assertEqual(len(players), 22)
+        subs = sum(e["type"] == "substitution" and e["minute"] <= 60 for e in EVENTS)
+        self.assertEqual(len(players), 22 + subs)
         res = client.get("/api/compare", params={"a": players[0]["name"], "b": players[-1]["name"], "minute": 60})
         self.assertEqual(res.status_code, 200)
         self.assertEqual(client.get("/api/compare", params={"a": "Nobody", "b": "Nobody"}).status_code, 404)
@@ -280,7 +344,50 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn(jargon, narrative)
 
     def test_analyze_validates_input(self):
-        self.assertEqual(TestClient(app).post("/api/analyze", json={"minute": 95}).status_code, 422)
+        client = TestClient(app)
+        self.assertEqual(client.post("/api/analyze", json={"minute": 200}).status_code, 422)
+        self.assertEqual(client.post("/api/analyze", json={"minute": 50, "match": "real-madrid"}).status_code, 422)
+
+    def test_every_endpoint_takes_a_match(self):
+        client = TestClient(app)
+        self.assertEqual(len(client.get("/api/matches").json()["matches"]), len(MATCHES))
+        for match_id, spec in MATCHES.items():
+            with self.subTest(match=match_id):
+                config = client.get("/api/config", params={"match": match_id}).json()
+                self.assertEqual(config["teams"]["home"]["name"], spec.teams["home"]["name"])
+                self.assertEqual(len(config["labels"]), config["length"] + 1)
+                state = client.get("/api/state", params={"match": match_id, "minute": 150}).json()
+                self.assertEqual(state["minute"], config["length"])
+                self.assertEqual(state["label"], config["labels"][-1])
+                names = {p["name"] for p in client.get("/api/players", params={"match": match_id}).json()["players"]}
+                self.assertIn(spec.squads["home"][0][2], names)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_repeat_questions_are_answered_from_the_cache_and_streamed(self):
+        client = TestClient(app)
+        body = {"minute": 70, "mode": "fan", "focus": "home", "question": "Who is pressing more?"}
+        first = client.post("/api/analyze", json=body).json()
+        with mock.patch("app.main.run_analysis") as run:
+            again = client.post("/api/analyze", json={**body, "question": "  who is PRESSING more? "}).json()
+            with client.stream("POST", "/api/analyze/stream", json=body) as res:
+                items = [json.loads(line) for line in res.iter_lines() if line]
+            run.assert_not_called()
+        self.assertEqual(first["narrative"], again["narrative"])
+        self.assertTrue(any(i["type"] == "step" for i in items))
+        self.assertEqual(items[-1]["result"]["narrative"], first["narrative"])
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_rate_limit(self):
+        client = TestClient(app)
+        with mock.patch("app.main.RATE_LIMIT", 3):
+            codes = [client.post("/api/analyze", json={"minute": 30 + i}).status_code for i in range(5)]
+        self.assertEqual(codes, [200, 200, 200, 429, 429])
+
+
+class WordingTests(unittest.TestCase):
+    def test_possessives(self):
+        self.assertEqual(tidy("Ashford Rovers's press"), "Ashford Rovers' press")
+        self.assertEqual(tidy("Northbridge City's press"), "Northbridge City's press")
 
 
 if __name__ == "__main__":

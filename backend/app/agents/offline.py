@@ -8,7 +8,7 @@ sometimes catches it out, and the Skeptic, which checks the whole spell, decides
 import re
 
 from ..moments import moment_at, moment_sentence
-from ..synthetic import TEAMS
+from ..synthetic import TEAMS, match_meta, minute_of, span, tidy
 from .models import METRIC_LABELS, Claim, Job
 from .tools import other, pick_evidence, too_close, window_stats
 
@@ -21,7 +21,9 @@ KEYWORDS = {
     "lost the ball": ["turnovers"], "giving the ball": ["turnovers"], "momentum": ["final_third_entries", "pressures"],
     "goal": ["xg", "shots"],
 }
-ALIASES = {"home": ("northbridge", "nbr"), "away": ("riverside", "rsu")}
+def aliases() -> dict[str, tuple[str, ...]]:
+    """How a question can name each team: full name, first word ("Riverside") or abbreviation."""
+    return {side: (t["name"].lower(), t["name"].split()[0].lower(), t["abbr"].lower()) for side, t in TEAMS.items()}
 
 # what a pundit talks about: (metric, compare, whose: focus|opponent|either)
 TOPICS = [
@@ -115,7 +117,7 @@ def _plain_number(metric: str, value: float) -> str:
 def explain_simply(claim: Claim) -> None:
     """Fill in the everyday-words version of a checked take."""
     team, opp = TEAMS[claim.team]["name"], TEAMS[other(claim.team)]["name"]
-    claim.plain = PLAIN[(claim.metric, claim.relation)].format(T=team)
+    claim.plain = tidy(PLAIN[(claim.metric, claim.relation)].format(T=team))
     if claim.actual_value is None or claim.compare_value is None:
         claim.plain_finding = "Too little has happened yet to say either way."
         return
@@ -131,7 +133,7 @@ def explain_simply(claim: Claim) -> None:
 
 def named_team(question: str) -> str | None:
     q = question.lower()
-    return next((side for side, names in ALIASES.items() if any(n in q for n in names)), None)
+    return next((side for side, names in aliases().items() if any(n in q for n in names)), None)
 
 
 def plan(job: Job) -> None:
@@ -140,26 +142,29 @@ def plan(job: Job) -> None:
     job.focus = named_team(q) or job.focus
 
     start, end = max(1, job.minute - 9), job.minute
-    if m := re.search(r"(?:between|from)\s*(\d{1,2})\D{1,8}?(\d{1,2})", q):
-        start, end = int(m[1]), int(m[2])
-    elif m := re.search(r"(?:after|since)\s*(?:the\s*)?(\d{1,2})", q):
-        start, end = int(m[1]), job.minute
-    elif m := re.search(r"before\s*(?:the\s*)?(\d{1,2})", q):
-        start, end = 1, int(m[1])
+    meta = match_meta()
+    at = r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?'?"  # a football minute: 60, 72', 45+2, 90+3'
+    if m := re.search(rf"(?:between|from)\s*{at}\D{{1,8}}?{at}", q):
+        start, end = minute_of(int(m[1]), int(m[2] or 0)), minute_of(int(m[3]), int(m[4] or 0))
+    elif m := re.search(rf"(?:after|since)\s*(?:the\s*)?{at}", q):
+        start, end = minute_of(int(m[1]), int(m[2] or 0)), job.minute
+    elif m := re.search(rf"before\s*(?:the\s*)?{at}", q):
+        start, end = 1, minute_of(int(m[1]), int(m[2] or 0))
     elif m := re.search(r"(?:last|past)\s*(\d{1,2})\s*min", q):
         start, end = job.minute - int(m[1]) + 1, job.minute
-    elif m := re.search(r"\bat\s*(\d{1,2})\b", q):  # "what led to the goal at 72?": the ten minutes up to it
-        start, end = int(m[1]) - 9, int(m[1])
-        if found := moment_at(job.minute, int(m[1]), named_team(q)):
+    elif m := re.search(rf"\bat\s*{at}(?!\d)", q):  # "what led to the goal at 72'?": the ten minutes up to it
+        asked = minute_of(int(m[1]), int(m[2] or 0))
+        start, end = asked - 9, asked
+        if found := moment_at(job.minute, asked, named_team(q)):
             job.moment = moment_sentence(found)
     elif "first half" in q:
-        start, end = 1, 45
+        start, end = 1, meta["first_half"]
     elif "second half" in q:
-        start, end = 46, 90
+        start, end = meta["first_half"] + 1, meta["length"]
     start, end = max(1, min(start, end)), max(start, end)
     if end > job.minute:
         job.log("Orchestrator", "Clamped window",
-                f"Question asks about minute {end}, but only {job.minute} minutes have been played.", "warn")
+                f"Question asks about {span(end, end)}, but the match is only at {span(job.minute, job.minute)}.", "warn")
         end = job.minute
     if start > end:  # the whole period asked about is still to come
         start = max(1, end - 9)
@@ -184,7 +189,7 @@ def premise_take(job: Job) -> Claim | None:
             return Claim(
                 id="Q1", team=team, metric=metric, start=start, end=end,
                 value=window_stats(team, start, end)[metric], relation=relation, compare=compare,
-                text=take.format(T=TEAMS[team]["name"], O=TEAMS[other(team)]["name"]),
+                text=tidy(take.format(T=TEAMS[team]["name"], O=TEAMS[other(team)]["name"])),
                 evidence_ids=pick_evidence(team, metric, start, end), proposed_by="Your question", premise=True,
             )
     return None
@@ -229,7 +234,7 @@ def propose(job: Job, limit: int = 4, skip: tuple[str, ...] = ()) -> list[Claim]
         claims.append(Claim(
             id=f"C{len(claims) + 1}", team=team, metric=metric, start=start, end=end,
             value=window_stats(team, start, end)[metric], relation=relation, compare=compare,
-            text=PHRASES[(metric, relation)].format(T=TEAMS[team]["name"]),
+            text=tidy(PHRASES[(metric, relation)].format(T=TEAMS[team]["name"])),
             evidence_ids=pick_evidence(team, metric, start, end),
         ))
         if len(claims) == limit:
@@ -250,7 +255,7 @@ def revise(rejected: list[Claim]) -> list[Claim]:
         revised.append(Claim(
             id=f"{c.id}R", team=team, metric=c.metric, start=c.start, end=c.end,
             value=window_stats(team, c.start, c.end)[c.metric], relation=relation, compare=c.compare,
-            text=PHRASES[(c.metric, relation)].format(T=TEAMS[team]["name"]),
+            text=tidy(PHRASES[(c.metric, relation)].format(T=TEAMS[team]["name"])),
             evidence_ids=pick_evidence(team, c.metric, c.start, c.end),
             proposed_by="Pundit (revision)", revision_of=c.id,
         ))
@@ -263,7 +268,9 @@ def _they(first: Claim, second: Claim) -> str:
         return second.plain
     name = TEAMS[second.team]["name"]
     rest = second.plain[len(name):]
-    return ("their" + rest[2:]) if rest.startswith("'s") else "they" + rest
+    if rest.startswith("'s") or rest.startswith("' "):
+        return "their" + rest[rest.index(" "):]
+    return "they" + rest
 
 
 def narrate_simply(job: Job) -> str:
@@ -294,7 +301,8 @@ def narrate(job: Job) -> str:
     text = narrate_simply(job) if job.mode == "simple" else _narrate(job)
     if not job.moment:
         return text
-    return f"{job.moment} In the ten minutes before it: {text.removeprefix("What's happening: ")}"
+    rest = text.removeprefix("What's happening: ")
+    return f"{job.moment} In the ten minutes before it: {rest}"
 
 
 def _narrate(job: Job) -> str:
@@ -317,5 +325,5 @@ def _narrate(job: Job) -> str:
         parts.append(f"{'But ' if parts else ''}\"{c.text}\" doesn't hold up{data(c)}."
                      + (f" {fix.text}." if fix else ""))
     if not parts:
-        return f"Not enough evidence in minutes {start}-{end} to back or bust any take yet."
+        return f"Not enough evidence in {span(start, end)} to back or bust any take yet."
     return " ".join(parts)
