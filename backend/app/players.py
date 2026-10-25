@@ -265,9 +265,10 @@ def summary(p: dict, simple: bool = False) -> str:
         near = c["wins_near_own_goal"]
         parts.append(f"won the ball back {n(c['ball_wins'], 'time')}"
                      + (f", {near} near their own goal" if near and not simple else ""))
-    if c["saves"] or c["blocks"]:
-        stops = [n(c["saves"], "save") if c["saves"] else "", n(c["blocks"], "blocked shot") if c["blocks"] else ""]
-        parts.append(("stopped the other team's shots with " if simple else "made ") + " and ".join(x for x in stops if x))
+    if c["saves"]:
+        parts.append(f"made {n(c['saves'], 'save')}")
+    if c["blocks"]:
+        parts.append(f"blocked {n(c['blocks'], 'shot')}")
     if c["chances_after_loss"]:
         parts.append(f"lost the ball before {n(c['chances_after_loss'], 'chance')} for {opp}"
                      + (f", including {n(c['goals_after_loss'], 'goal')}" if c["goals_after_loss"] else ""))

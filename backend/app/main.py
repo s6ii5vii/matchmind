@@ -53,8 +53,10 @@ def clamp(minute: int) -> int:
 
 # --- keeping model costs in check: a per-visitor limit and a cache of answers ----------------------
 
-RATE_LIMIT = int(os.environ.get("MATCHMIND_RATE_LIMIT", "12"))  # questions per visitor per minute
+RATE_LIMIT = int(os.environ.get("MATCHMIND_RATE_LIMIT", "30"))  # questions per visitor per minute
+MODEL_BUDGET = int(os.environ.get("MATCHMIND_MODEL_BUDGET", "400"))  # model-written answers per hour, all visitors
 _recent: dict[str, deque] = {}
+_model_calls: deque = deque()
 _answers: OrderedDict = OrderedDict()
 CACHE_SIZE = 512
 
@@ -76,6 +78,19 @@ def check_rate(request: Request) -> None:
     if len(_recent) > 10_000:  # forget visitors who have gone quiet
         for key in [k for k, v in _recent.items() if not v or now - v[-1] > 60]:
             _recent.pop(key, None)
+
+
+def budgeted(client, provider: str):
+    """The model client while this hour's budget lasts; past it, the rule-based agents answer for free."""
+    if client is None:
+        return client, provider
+    now = time.monotonic()
+    while _model_calls and now - _model_calls[0] > 3600:
+        _model_calls.popleft()
+    if len(_model_calls) >= MODEL_BUDGET:
+        return None, "offline"
+    _model_calls.append(now)
+    return client, provider
 
 
 def cache_key(body: AnalyzeRequest, provider: str) -> tuple:
@@ -165,9 +180,10 @@ async def analyze(body: AnalyzeRequest, request: Request):
     with use_match(body.match):
         key = cache_key(body, provider)
         if (result := cached(key)) is None:
+            client, provider = budgeted(client, provider)
             result = await run_analysis(clamp(body.minute), body.mode, body.focus, body.question,
                                         client=client, provider=provider, match=body.match)
-            remember(key, result)
+            remember(cache_key(body, provider), result)
     return {"synthetic": True, **result}
 
 
@@ -189,9 +205,11 @@ async def analyze_stream(body: AnalyzeRequest, request: Request):
                     queue.put_nowait({"type": "step", **step})
                     await asyncio.sleep(0.04)
             else:
-                result = await run_analysis(minute, body.mode, body.focus, body.question, client=client,
-                                            provider=provider, listener=queue.put_nowait, match=body.match)
-                remember(key, result)
+                model, engine = budgeted(client, provider)
+                result = await run_analysis(minute, body.mode, body.focus, body.question, client=model,
+                                            provider=engine, listener=queue.put_nowait, match=body.match)
+                with use_match(body.match):
+                    remember(cache_key(body, engine), result)
             queue.put_nowait({"type": "result", "result": {"synthetic": True, **result}})
         except Exception:
             queue.put_nowait({"type": "error", "detail": "The agents couldn't finish this one. Try again."})

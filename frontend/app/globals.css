@@ -414,3 +414,40 @@ footer { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wr
 @media (max-width: 640px) { .about-inner { padding: 20px 18px 24px; } .about h2 { font-size: 30px; } }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- match picker, added time, followed questions, history ---------- */
+.match-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin: 0 0 16px; }
+.match-picker .control-label { min-width: 0; }
+.match-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.match-options button { padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; font-size: 13px; color: var(--muted); transition: background .15s, color .15s, border-color .15s; }
+.match-options button b { font-weight: 500; }
+.match-options button span { color: var(--faint); margin: 0 2px; }
+.match-options button:hover { background: var(--surface-2); color: var(--ink); }
+.match-options button.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.match-options button.active span { color: inherit; opacity: .6; }
+.match-story { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.added-board { margin-left: 8px; padding: 1px 7px; border-radius: 5px; background: var(--accent); color: var(--on-accent); font: 500 12px var(--mono); }
+.tick.half { background: var(--line-strong); height: 8px; }
+.follow-btn { margin-top: 14px; padding: 7px 14px; border: 1px solid var(--accent-text); border-radius: 999px; background: transparent; color: var(--accent-text); font: 500 12px var(--sans); }
+.follow-btn:disabled { cursor: default; opacity: .8; }
+.followed { margin: 22px 28px 0; padding: 18px 22px; border: 1px solid var(--line-strong); border-radius: 14px; }
+.followed > b { font: 500 11px var(--mono); letter-spacing: .12em; color: var(--muted); }
+.followed-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.followed-item:first-of-type { border-top: 0; padding-top: 0; }
+.followed-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.followed-top strong { font-weight: 500; font-size: 14px; }
+.followed-top span { display: flex; gap: 6px; flex-shrink: 0; }
+.followed-top button { padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; font-size: 12px; color: var(--muted); }
+.followed-item p { margin: 8px 0 0; font-size: 14px; line-height: 1.55; color: var(--ink); }
+.followed-item p small { font: 500 11px var(--mono); color: var(--accent-text); margin-right: 6px; }
+.history { margin: 18px 28px 0; border-top: 1px solid var(--line); padding: 14px 0 22px; }
+.history summary { cursor: pointer; font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); list-style: none; }
+.history summary::before { content: "+ "; color: var(--accent-text); }
+.history[open] summary::before { content: "− "; }
+.history ul { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.history li button { width: 100%; text-align: left; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: transparent; display: flex; flex-direction: column; gap: 2px; }
+.history li button:hover { background: var(--surface-2); }
+.history li b { font-weight: 500; font-size: 13px; }
+.history li small { font-size: 12px; color: var(--muted); }
+.clear-history { margin-top: 10px; border: 0; background: none; padding: 0; font-size: 12px; color: var(--muted); text-decoration: underline; }
+@media (max-width: 640px) { .followed { padding: 14px 16px; } .match-options button { font-size: 12px; } }

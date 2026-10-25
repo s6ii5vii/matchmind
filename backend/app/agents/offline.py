@@ -157,6 +157,10 @@ def plan(job: Job) -> None:
         start, end = asked - 9, asked
         if found := moment_at(job.minute, asked, named_team(q)):
             job.moment = moment_sentence(found)
+    elif re.search(r"(?:after|since)\s*(?:the\s*)?(?:half[- ]?time|the break|the interval|the restart)", q):
+        start, end = meta["first_half"] + 1, job.minute
+    elif re.search(r"(?:before|by)\s*(?:the\s*)?(?:half[- ]?time|the break|the interval)", q):
+        start, end = 1, meta["first_half"]
     elif "first half" in q:
         start, end = 1, meta["first_half"]
     elif "second half" in q:

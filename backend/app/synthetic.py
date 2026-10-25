@@ -124,9 +124,10 @@ MATCHES: dict[str, MatchSpec] = {m.id: m for m in [
         phases=[(1, 69, {"home_ball": 0.63, "press": {"home": 1.1, "away": 0.7}, "error": {"home": 1.0, "away": 1.05}}),
                 (70, 90, {"home_ball": 0.50, "press": {"home": 0.9, "away": 1.3}, "error": {"home": 1.15, "away": 0.95}})],
         seed=9013,
-        story="Hollowmere dominate the ball against a deep Stanton Vale block; both keepers keep it goalless.",
-        questions=("Who is controlling the game?", "Why can't Hollowmere break Stanton Vale down?",
-                   "Are Stanton Vale defending well?"),
+        story="Hollowmere dominate the ball for an hour against a deep Stanton Vale block; Stanton grow into it late "
+              "on, and both keepers keep it goalless.",
+        questions=("Who is controlling the game?", "Are Hollowmere dominating the ball?",
+                   "Are Hollowmere creating the better chances?"),
     ),
 ]}
 DEFAULT_MATCH = "northbridge-riverside"

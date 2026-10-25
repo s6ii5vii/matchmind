@@ -125,6 +125,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(first["window"], [1, match_meta()["first_half"]])
         second = self.run_job(match_meta()["length"], "fan", "home", "How did the second half go?")
         self.assertEqual(second["window"], [match_meta()["first_half"] + 1, match_meta()["length"]])
+        after = self.run_job(80, "fan", "home", "Why did Ashford lose control after half-time?")
+        self.assertEqual(after["window"], [match_meta()["first_half"] + 1, 80])
 
     def test_every_match_can_be_analysed(self):
         for match_id, spec in MATCHES.items():
@@ -382,6 +384,16 @@ class ApiTests(unittest.TestCase):
         with mock.patch("app.main.RATE_LIMIT", 3):
             codes = [client.post("/api/analyze", json={"minute": 30 + i}).status_code for i in range(5)]
         self.assertEqual(codes, [200, 200, 200, 429, 429])
+
+
+    def test_model_budget_falls_back_to_rules(self):
+        from app import main
+        main._model_calls.clear()
+        with mock.patch("app.main.MODEL_BUDGET", 2):
+            used = [main.budgeted(object(), "nebius")[1] for _ in range(3)]
+        self.assertEqual(used, ["nebius", "nebius", "offline"])
+        self.assertEqual(main.budgeted(None, "offline"), (None, "offline"))
+        main._model_calls.clear()
 
 
 class WordingTests(unittest.TestCase):

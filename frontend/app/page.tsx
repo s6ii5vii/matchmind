@@ -5,23 +5,34 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Side = "home" | "away";
 type Mode = "simple" | "fan" | "analyst";
 type Theme = "light" | "dark";
-type Filter = "all" | "goal" | "shot" | "pass" | "pressure" | "turnover";
+type Filter = "all" | "goal" | "shot" | "pass" | "pressure" | "turnover" | "stops";
 type Event = {
-  id: string; minute: number; second: number; clock: string;
-  team: Side; player: string; type: string; outcome: string;
-  is_goal: boolean; x: number; y: number; xg?: number;
+  id: string; minute: number; second: number; clock: string; label: string; period: number;
+  team: Side; player: string; type: string; outcome: string; receiver: string | null; pass_type: string | null;
+  is_goal: boolean; x: number; y: number; xg?: number; duration_s?: number | null;
 };
 type Stats = {
   goals: number; passes: number; completed_passes: number; pass_accuracy: number | null;
   shots: number; xg: number; pressures: number; tackles_won: number;
   turnovers: number; event_share: number; possession: number | null; recoveries: number; final_third_entries: number;
+  saves: number; corners: number; fouls: number; yellow_cards: number;
 };
+type Team = { name: string; abbr: string; color: string };
 type MatchState = {
-  minute: number; is_synthetic: boolean; teams: Record<Side, { name: string; abbr: string; color: string }>;
+  minute: number; label: string; period: number; length: number; match: string;
+  added: Record<string, number>; announced: Record<string, number | null>;
+  is_synthetic: boolean; teams: Record<Side, Team>;
   score: Record<Side, number>; stats: Record<Side, Stats>;
-  recent_events: Event[]; goal_events: Event[];
+  recent_events: Event[]; goal_events: Event[]; stoppages: Event[];
   observed_event_count: number; method: string;
 };
+type MatchInfo = { id: string; teams: Record<Side, Team>; story: string };
+type Config = {
+  match: string; teams: Record<Side, Team>; story: string; questions: string[]; length: number; first_half: number;
+  added: Record<string, number>; labels: string[]; matches: MatchInfo[]; model_provider: Analysis["engine"];
+};
+type Followed = { question: string; label?: string; narrative?: string };
+type HistoryItem = { question: string; match: string; label: string; narrative: string };
 type Flash = { side: Side; player: string; clock: string; key: number };
 type Verdict = "verified" | "corrected" | "unproven" | "rejected" | "pending";
 type Claim = {
@@ -39,19 +50,19 @@ type Player = {
 };
 type MomentPoint = { x: number; y: number; player: string; kind: "win" | "pass" | "shot" | "goal" };
 type Moment = {
-  id: string; minute: number; clock: string; team: Side; kind: "goal" | "chance"; title: string; story: string;
+  id: string; minute: number; label: string; clock: string; team: Side; kind: "goal" | "chance"; title: string; story: string;
   xg: number; question: string; path: MomentPoint[];
 };
 type Duel = { a: Player; b: Player; winner: string | null; verdict: string; categories: { key: Category; label: string }[] };
 const PLAIN_CATEGORY: Record<Category, string> = {
   chances: "Helping create chances", build_up: "Moving the ball towards goal",
-  defending: "Winning the ball back", ball_security: "Not losing the ball", costly: "Mistakes that led to chances",
+  defending: "Winning the ball and stopping shots", ball_security: "Not losing the ball", costly: "Mistakes that led to chances",
 };
 const POSITION: Record<string, string> = { GK: "Goalkeeper", DF: "Defender", MF: "Midfielder", FW: "Forward" };
 
 type Analysis = {
-  engine: "foundry" | "nebius" | "offline"; window: [number, number]; narrative: string; narrative_source: string;
-  claims: Claim[]; trace: TraceStep[]; minute: number;
+  engine: "foundry" | "nebius" | "offline"; window: [number, number]; window_label: string; narrative: string;
+  narrative_source: string; claims: Claim[]; trace: TraceStep[]; minute: number; question: string; match: string;
 };
 
 const ENGINE_LABEL: Record<Analysis["engine"], string> = { foundry: "Microsoft Foundry", nebius: "Nebius Token Factory", offline: "Rule-based" };
@@ -65,12 +76,33 @@ function takeSource(c: Claim, simple: boolean): string {
   if (simple) return c.revision_of ? "On second thoughts" : "People are saying";
   return c.revision_of ? "Pundit, rethinking" : "The pundit says";
 }
-const SUGGESTIONS = ["Who is controlling the game?", "Why did Riverside lose control after 60?", "Is Northbridge's press working?"];
+const DEFAULT_MATCH = "northbridge-riverside";
+const MAX_FOLLOWED = 3;
+const FOLLOW_EVERY = 10; // match minutes between refreshes of a followed question while the match plays
+const HISTORY_KEY = "matchmind-history";
 
 const descriptions: Record<string, string> = {
   pass: "Pass", pressure: "Pressure applied", tackle: "Tackle", shot: "Shot", turnover: "Lost the ball",
-  interception: "Interception", foul: "Foul",
+  interception: "Interception", foul: "Foul", recovery: "Ball recovered", save: "Save", block: "Shot blocked",
+  clearance: "Clearance", claim: "Keeper claims the cross", carry: "Carry", offside: "Offside", card: "Yellow card",
 };
+const RESTARTS: Record<string, string> = {
+  corner: "Corner", free_kick: "Free kick", throw_in: "Throw-in", goal_kick: "Goal kick", kick_off: "Kick-off",
+  cross: "Cross", keeper: "Keeper's pass",
+};
+
+function readHistory(): HistoryItem[] {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as HistoryItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items: HistoryItem[]) {
+  try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 20))); } catch { /* private window */ }
+}
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
@@ -79,20 +111,35 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "pass", label: "Passes" },
   { id: "pressure", label: "Pressure" },
   { id: "turnover", label: "Turnovers" },
+  { id: "stops", label: "Cards, subs & stoppages" },
 ];
 
 function eventLabel(event: Event): string {
   if (event.is_goal) return "Goal";
-  if (event.type === "pass") return `${event.outcome === "complete" ? "Completed" : "Missed"} pass`;
+  if (event.type === "pass") {
+    const kind = event.pass_type ? RESTARTS[event.pass_type] ?? "Pass" : "Pass";
+    return kind === "Pass" ? `${event.outcome === "complete" ? "Completed" : "Missed"} pass` : `${kind}${event.outcome === "complete" ? "" : ", missed"}`;
+  }
   if (event.type === "shot") return `Shot ${event.outcome.replace("_", " ")}`;
   if (event.type === "tackle") return `Tackle ${event.outcome}`;
+  if (event.type === "dribble") return event.outcome === "complete" ? "Beat a defender" : "Dribble stopped";
+  if (event.type === "substitution") return `Substitution: ${event.receiver} on`;
+  if (event.type === "stoppage") {
+    const what = event.outcome === "injury" ? "Injury stoppage" : "VAR check, goal stands";
+    return event.duration_s ? `${what} (${Math.round(event.duration_s / 6) / 10} min)` : what;
+  }
   return descriptions[event.type] ?? event.type;
 }
 
 function matchesFilter(event: Event, filter: Filter): boolean {
   if (filter === "all") return true;
   if (filter === "goal") return event.is_goal;
+  if (filter === "stops") return ["card", "substitution", "stoppage"].includes(event.type);
   return event.type === filter;
+}
+
+function matchFromUrl(): string {
+  try { return new URLSearchParams(window.location.search).get("match") ?? DEFAULT_MATCH; } catch { return DEFAULT_MATCH; }
 }
 
 const PlayIcon = () => (<svg width="16" height="16" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor" /></svg>);
@@ -102,6 +149,8 @@ const MoonIcon = () => (<svg width="15" height="15" viewBox="0 0 24 24" fill="no
 const SunIcon = () => (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>);
 
 export default function Home() {
+  const [match, setMatch] = useState(DEFAULT_MATCH);
+  const [config, setConfig] = useState<Config | null>(null);
   const [minute, setMinute] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mode, setMode] = useState<Mode>("fan");
@@ -112,7 +161,7 @@ export default function Home() {
   const [loadError, setLoadError] = useState("");
   const [question, setQuestion] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "error" | "busy">("idle");
   const [live, setLive] = useState<{ agent: string | null; detail: string; seen: string[]; steps: TraceStep[] }>(
     { agent: null, detail: "", seen: [], steps: [] });
   const [players, setPlayers] = useState<Player[]>([]);
@@ -124,12 +173,36 @@ export default function Home() {
   const [momentId, setMomentId] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef<{ minute: number; home: number; away: number } | null>(null);
+  const [followed, setFollowed] = useState<Followed[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const length = config?.length ?? 90;
+  const labelOf = (m: number) => config?.labels[m] ?? `${m}'`;
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => { setMatch(matchFromUrl()); setHistory(readHistory()); }, []);
+
+  // switching match starts it from kick-off, with nothing carried over from the last one
+  const chooseMatch = (id: string) => {
+    if (id === match) return;
+    setPlaying(false); setMinute(0); setAnalysis(null); setAnalysisStatus("idle"); setQuestion("");
+    setPick({ a: "", b: "" }); setDuel(null); setPlayers([]); setMoments([]); setMomentId(null); setFollowed([]); setFocus("home");
+    prev.current = null;
+    setMatch(id);
+    try { window.history.replaceState(null, "", id === DEFAULT_MATCH ? window.location.pathname : `?match=${id}`); } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/state?minute=${minute}&mode=${mode}&focus=${focus}`, { signal: controller.signal })
+    fetch(`/api/config?match=${match}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((result: Config) => { setConfig(result); setProvider(result.model_provider); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [match]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/state?minute=${minute}&mode=${mode}&focus=${focus}&match=${match}`, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) throw new Error(`API returned ${res.status}`);
         return (await res.json()) as MatchState;
@@ -137,7 +210,7 @@ export default function Home() {
       .then((result) => { setData(result); setLoadError(""); })
       .catch((e: Error) => { if (e.name !== "AbortError") setLoadError("Backend unreachable. Start FastAPI on port 8000, then refresh."); });
     return () => controller.abort();
-  }, [minute, mode, focus]);
+  }, [minute, mode, focus, match]);
 
   // goal celebration: fires when the score goes up by stepping forward a minute or less
   useEffect(() => {
@@ -150,7 +223,7 @@ export default function Home() {
         const side: Side | null = cur.home > p.home ? "home" : cur.away > p.away ? "away" : null;
         if (side) {
           const g = [...data.goal_events].reverse().find((e) => e.team === side);
-          setFlash({ side, player: g?.player ?? "", clock: g?.clock ?? `${cur.minute}'`, key: Date.now() });
+          setFlash({ side, player: g?.player ?? "", clock: g?.label ?? data.label, key: Date.now() });
         }
       }
     }
@@ -164,53 +237,74 @@ export default function Home() {
 
   useEffect(() => {
     if (!playing) return;
-    const id = window.setInterval(() => setMinute((m) => (m >= 90 ? 90 : m + 1)), 950);
+    const id = window.setInterval(() => setMinute((m) => (m >= length ? length : m + 1)), 950);
     return () => window.clearInterval(id);
-  }, [playing]);
-  useEffect(() => { if (minute === 90) setPlaying(false); }, [minute]);
+  }, [playing, length]);
+  useEffect(() => { if (minute >= length) setPlaying(false); }, [minute, length]);
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/players?minute=${minute}`, { signal: controller.signal })
+    fetch(`/api/players?minute=${minute}&match=${match}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((result: { players: Player[] }) => setPlayers(result.players))
       .catch(() => {});
     return () => controller.abort();
-  }, [minute]);
-
-  useEffect(() => {
-    fetch("/api/config")
-      .then((res) => res.json())
-      .then((config: { model_provider: Analysis["engine"] }) => setProvider(config.model_provider))
-      .catch(() => {});
-  }, []);
+  }, [minute, match]);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/moments?minute=${minute}`, { signal: controller.signal })
+    fetch(`/api/moments?minute=${minute}&match=${match}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((result: { moments: Moment[] }) => setMoments(result.moments))
       .catch(() => {});
     return () => controller.abort();
-  }, [minute]);
+  }, [minute, match]);
 
-  // default duel: the most influential goalscorer against the most influential defender
+  // default duel: the best-rated forward against the best-rated defender on the other side
   useEffect(() => {
     if (pick.a || players.length === 0) return;
     const scorer = players.find((p) => p.position === "FW") ?? players[0];
-    const defender = players.find((p) => p.position === "DF" && p.name !== scorer.name) ?? players[1];
+    const defender = players.find((p) => p.position === "DF" && p.team !== scorer.team)
+      ?? players.find((p) => p.name !== scorer.name) ?? players[1];
     setPick({ a: scorer.name, b: defender.name });
   }, [players, pick.a]);
 
   useEffect(() => {
     if (!pick.a || !pick.b) return;
     const controller = new AbortController();
-    const params = new URLSearchParams({ a: pick.a, b: pick.b, minute: String(minute), mode });
+    const params = new URLSearchParams({ a: pick.a, b: pick.b, minute: String(minute), mode, match });
     fetch(`/api/compare?${params}`, { signal: controller.signal })
-      .then((res) => res.json())
-      .then((result: Duel) => setDuel(result))
+      .then((res) => (res.ok ? res.json() : null))
+      .then((result: Duel | null) => setDuel(result))
       .catch(() => {});
     return () => controller.abort();
-  }, [pick, minute, mode]);
+  }, [pick, minute, mode, match]);
+
+  // a followed question is asked again as the match plays on, so its answer stays current
+  const refreshFollowed = useCallback((items: Followed[], at: number) => {
+    items.forEach((f) => {
+      fetch("/api/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minute: at, mode, focus, question: f.question, match }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((result: Analysis | null) => {
+          if (!result) return;
+          setFollowed((list) => list.map((x) => (x.question === f.question
+            ? { ...x, label: labelOf(result.minute), narrative: result.narrative } : x)));
+        })
+        .catch(() => {});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, focus, match, config]);
+  useEffect(() => {
+    if (!playing || followed.length === 0 || minute === 0 || minute % FOLLOW_EVERY !== 0) return;
+    refreshFollowed(followed, minute);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minute, playing]);
+  const follow = (q: string, answer: Analysis) => {
+    setFollowed((list) => list.some((f) => f.question === q) ? list
+      : [...list, { question: q, label: labelOf(answer.minute), narrative: answer.narrative }].slice(-MAX_FOLLOWED));
+  };
 
   const runAgents = useCallback(async (q: string) => {
     setPlaying(false);
@@ -220,8 +314,9 @@ export default function Home() {
       // the agents report each step as it happens (newline-delimited JSON), then the result
       const response = await fetch("/api/analyze/stream", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minute, mode, focus, question: q }),
+        body: JSON.stringify({ minute, mode, focus, question: q, match }),
       });
+      if (response.status === 429) throw new Error("busy");
       if (!response.ok || !response.body) throw new Error(`API returned ${response.status}`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -250,12 +345,22 @@ export default function Home() {
         }
       }
       if (!result) throw new Error("No result");
-      setAnalysis(result);
+      const answer: Analysis = result;
+      setAnalysis(answer);
       setAnalysisStatus("idle");
-    } catch {
-      setAnalysisStatus("error");
+      if (q.trim()) {
+        setHistory((items) => {
+          const next = [{ question: q.trim(), match, label: labelOf(answer.minute), narrative: answer.narrative },
+            ...items.filter((h) => !(h.question === q.trim() && h.match === match))].slice(0, 20);
+          saveHistory(next);
+          return next;
+        });
+      }
+    } catch (e) {
+      setAnalysisStatus((e as Error).message === "busy" ? "busy" : "error");
     }
-  }, [minute, mode, focus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minute, mode, focus, match, config]);
 
   const askAbout = (q: string) => {
     setQuestion(q);
@@ -268,9 +373,16 @@ export default function Home() {
   const home = data?.teams.home;
   const away = data?.teams.away;
   const goals = data?.goal_events ?? [];
-  const feed = (data?.recent_events ?? []).filter((e) => matchesFilter(e, filter)).slice(0, 6);
-  const pct = (minute / 90) * 100;
-  const status = playing ? "Live" : minute === 0 ? "Kick-off" : minute === 90 ? "Full time" : "Paused";
+  const feed = (filter === "stops" ? data?.stoppages ?? [] : (data?.recent_events ?? []).filter((e) => matchesFilter(e, filter))).slice(0, 8);
+  const pct = (minute / length) * 100;
+  const firstHalf = config?.first_half ?? 45;
+  const status = playing ? "Live" : minute === 0 ? "Kick-off" : minute >= length ? "Full time"
+    : minute === firstHalf ? "Half time" : "Paused";
+  // the fourth official's board: shown from 45:00 and 90:00 until the half ends
+  const board = data && data.minute >= 45 && data.minute <= firstHalf ? data.announced["1"]
+    : data && data.minute >= firstHalf + 45 ? data.announced["2"] : null;
+  const questions = config?.questions ?? [];
+  const pastQuestions = history.filter((h) => h.match === match).slice(0, 6);
   const flashColor = flash ? (flash.side === "home" ? "var(--home)" : "var(--away)") : undefined;
 
   const rows: { label: string; h?: number | null; a?: number | null; unit?: string }[] = [
@@ -282,6 +394,10 @@ export default function Home() {
     { label: "Pressure events", h: st?.home.pressures, a: st?.away.pressures },
     { label: "Final-third entries", h: st?.home.final_third_entries, a: st?.away.final_third_entries },
     { label: "Ball recoveries", h: st?.home.recoveries, a: st?.away.recoveries },
+    { label: "Saves", h: st?.home.saves, a: st?.away.saves },
+    { label: "Corners", h: st?.home.corners, a: st?.away.corners },
+    { label: "Fouls", h: st?.home.fouls, a: st?.away.fouls },
+    { label: "Yellow cards", h: st?.home.yellow_cards, a: st?.away.yellow_cards },
   ];
 
   return (
@@ -289,7 +405,7 @@ export default function Home() {
       <header className="header">
         <div className="brand"><span className="brand-icon">m</span><span>matchmind</span></div>
         <div className="header-right">
-          <span className="header-meta">v0.3 · fictional match</span>
+          <span className="header-meta">v0.4 · fictional matches</span>
           <button className="icon-btn" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle theme">
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
@@ -307,6 +423,18 @@ export default function Home() {
 
       {loadError && <div className="error-banner" role="alert">{loadError} Instructions are in README.md.</div>}
 
+      <nav className="match-picker" aria-label="Choose a match">
+        <span className="control-label">MATCH</span>
+        <div className="match-options">
+          {(config?.matches ?? []).map((m) => (
+            <button key={m.id} className={m.id === match ? "active" : ""} onClick={() => chooseMatch(m.id)} aria-pressed={m.id === match}>
+              <b>{m.teams.home.name}</b> <span>v</span> <b>{m.teams.away.name}</b>
+            </button>
+          ))}
+        </div>
+        {config?.story && <small className="match-story">{minute >= length ? config.story : "Fictional match · press play or scrub the timeline"}</small>}
+      </nav>
+
       <section
         key={flash ? flash.key : "idle"}
         className={`surface scoreboard ${flash ? "flash" : ""}`}
@@ -314,8 +442,8 @@ export default function Home() {
         aria-label="Scoreboard"
       >
         <div className="team team-home">
-          <div className={`crest crest-home ${flash?.side === "home" ? "scored" : ""}`}>N</div>
-          <div><span className="team-caption">HOME</span><strong>{home?.name ?? "Northbridge City"}</strong><small>Northbridge, fictional club</small></div>
+          <div className={`crest crest-home ${flash?.side === "home" ? "scored" : ""}`}>{home?.name[0] ?? ""}</div>
+          <div><span className="team-caption">HOME</span><strong>{home?.name ?? ""}</strong><small>{home ? `${home.name.split(" ")[0]}, fictional club` : ""}</small></div>
         </div>
         <div className="score-center">
           <div className={`status-line ${playing ? "live" : ""}`}>{status}</div>
@@ -324,34 +452,35 @@ export default function Home() {
             <span className="sep">–</span>
             <span className="score-num" key={`a${data?.score.away ?? 0}`}>{data?.score.away ?? 0}</span>
           </div>
-          <div className="minute">{String(minute).padStart(2, "0")}:00 / 90:00</div>
+          <div className="minute">{minute === 0 ? "0'" : data?.label ?? labelOf(minute)}{data && minute > 0 ? ` · ${data.period === 1 ? "1st" : "2nd"} half` : ""}{board ? <span className="added-board" title="Added time">+{board}</span> : null}</div>
         </div>
         <div className="team team-away">
-          <div><span className="team-caption">AWAY</span><strong>{away?.name ?? "Riverside United"}</strong><small>Riverside, fictional club</small></div>
-          <div className={`crest crest-away ${flash?.side === "away" ? "scored" : ""}`}>R</div>
+          <div><span className="team-caption">AWAY</span><strong>{away?.name ?? ""}</strong><small>{away ? `${away.name.split(" ")[0]}, fictional club` : ""}</small></div>
+          <div className={`crest crest-away ${flash?.side === "away" ? "scored" : ""}`}>{away?.name[0] ?? ""}</div>
         </div>
         {flash && <div className="goal-banner">Goal · <b>{flash.player}</b> {flash.clock}</div>}
       </section>
 
       <section className="playback">
-        <button className="play-btn" onClick={() => { if (minute === 90) setMinute(0); setPlaying(!playing || minute === 90); }} aria-label={playing ? "Pause" : "Play"}>
+        <button className="play-btn" onClick={() => { if (minute >= length) setMinute(0); setPlaying(!playing || minute >= length); }} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <PauseIcon /> : <PlayIcon />}
         </button>
         <button className="text-btn" onClick={() => { setPlaying(false); setMinute(0); }}><ResetIcon />Reset</button>
         <div className="track">
           <input
-            type="range" min="0" max="90" step="1" value={minute}
+            type="range" min="0" max={length} step="1" value={minute}
             onChange={(e) => { setPlaying(false); setMinute(Number(e.target.value)); }}
-            aria-label="Match minute" className="timeline"
+            aria-label="Match minute" aria-valuetext={labelOf(minute)} className="timeline"
             style={{ background: `linear-gradient(90deg,var(--ink) ${pct}%,var(--line-strong) ${pct}%)` }}
           />
-          {goals.map((g) => <i key={g.id} className="tick" style={{ left: `${(g.minute / 90) * 100}%` }} />)}
+          {goals.map((g) => <i key={g.id} className="tick" style={{ left: `${(g.minute / length) * 100}%` }} />)}
+          <i className="tick half" style={{ left: `${(firstHalf / length) * 100}%` }} title="Half time" />
         </div>
-        <div className="time-end">90&apos;</div>
+        <div className="time-end">{labelOf(length)}</div>
       </section>
       <div className="goal-tracks">
         {goals.map((event) => (
-          <span key={event.id} title={`${event.player} scored at ${event.clock}`}>{event.minute}&apos; {event.player}</span>
+          <span key={event.id} title={`${event.player} scored at ${event.clock}`}>{event.label} {event.player}</span>
         ))}
       </div>
 
@@ -367,8 +496,8 @@ export default function Home() {
         <div className="control-row">
           <span className="control-label">FOLLOWING</span>
           <div className="seg">
-            <button className={focus === "home" ? "active" : ""} onClick={() => setFocus("home")}>Northbridge City</button>
-            <button className={focus === "away" ? "active" : ""} onClick={() => setFocus("away")}>Riverside United</button>
+            <button className={focus === "home" ? "active" : ""} onClick={() => setFocus("home")}>{config?.teams.home.name ?? "Home"}</button>
+            <button className={focus === "away" ? "active" : ""} onClick={() => setFocus("away")}>{config?.teams.away.name ?? "Away"}</button>
           </div>
         </div>
       </div>
@@ -377,24 +506,25 @@ export default function Home() {
         <div className="panel-head">
           <h2><span className="section-numeral">01</span>Agent room</h2>
           <span className="panel-meta">
-            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · minute ${analysis.minute}` : "Five agents · every take checked"}
+            {analysis ? `${ENGINE_LABEL[analysis.engine]} agents · at ${labelOf(analysis.minute)}` : "Five agents · every take checked"}
           </span>
         </div>
         <form className="ask" onSubmit={(e) => { e.preventDefault(); runAgents(question); }}>
           <input
             value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={300}
-            placeholder={`Ask about the match so far (minute ${minute})…`} aria-label="Question for the agents"
+            placeholder={`Ask about the match so far (${labelOf(minute)})…`} aria-label="Question for the agents"
           />
           <button type="submit" disabled={analysisStatus === "loading" || minute === 0}>
             {analysisStatus === "loading" ? "Agents working…" : question.trim() ? "Ask the agents" : "Analyse this moment"}
           </button>
         </form>
         <div className="suggestions">
-          {SUGGESTIONS.map((s) => (
+          {questions.map((s) => (
             <button key={s} type="button" onClick={() => { setQuestion(s); runAgents(s); }} disabled={analysisStatus === "loading" || minute === 0}>{s}</button>
           ))}
         </div>
         {analysisStatus === "error" && <div className="recap-box error"><b>AGENTS UNAVAILABLE</b><p>Couldn&apos;t reach the analysis service. Check the backend is running.</p></div>}
+        {analysisStatus === "busy" && <div className="recap-box error"><b>ONE MOMENT</b><p>That&apos;s a lot of questions at once. Give the agents a few seconds and try again.</p></div>}
         {!analysis && analysisStatus === "idle" && (
           <div className="empty">{minute === 0 ? "Play or scrub the match, then ask the agents." : "A pundit gives the popular takes, a skeptic checks every one against the data. Ask a question or analyse this moment."}</div>
         )}
@@ -420,9 +550,15 @@ export default function Home() {
         {analysis && analysisStatus !== "loading" && (
           <div className="room">
             <div className="answer">
-              <b>THE ANSWER · MINUTES {analysis.window[0]}–{analysis.window[1]}</b>
+              <b>THE ANSWER · {analysis.window_label}</b>
               <p>{analysis.narrative}</p>
               <small>Written by the Narrator{analysis.narrative_source === "model" ? ` (${ENGINE_LABEL[analysis.engine]} model)` : ""} from the takes the Skeptic checked below.</small>
+              {analysis.question && (
+                <button className="follow-btn" type="button" onClick={() => follow(analysis.question, analysis)}
+                  disabled={followed.some((f) => f.question === analysis.question)}>
+                  {followed.some((f) => f.question === analysis.question) ? "✓ Following this question" : "Follow this question as the match goes on"}
+                </button>
+              )}
             </div>
             <div className="takes-summary">
               <span><b>The take</b> vs <b>the data</b></span>
@@ -474,6 +610,38 @@ export default function Home() {
               </ol>
             </details>
           </div>
+        )}
+        {followed.length > 0 && (
+          <div className="followed" aria-live="polite">
+            <b>FOLLOWING · UPDATES EVERY {FOLLOW_EVERY} MINUTES WHILE THE MATCH PLAYS</b>
+            {followed.map((f) => (
+              <div key={f.question} className="followed-item">
+                <div className="followed-top">
+                  <strong>{f.question}</strong>
+                  <span>
+                    <button type="button" onClick={() => refreshFollowed([f], minute)} disabled={minute === 0}>Update now</button>
+                    <button type="button" onClick={() => setFollowed((l) => l.filter((x) => x.question !== f.question))} aria-label={`Stop following ${f.question}`}>✕</button>
+                  </span>
+                </div>
+                {f.narrative && <p><small>{f.label}</small> {f.narrative}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+        {pastQuestions.length > 0 && (
+          <details className="history">
+            <summary>Your recent questions · saved in this browser only</summary>
+            <ul>
+              {pastQuestions.map((h) => (
+                <li key={h.question}>
+                  <button type="button" onClick={() => { setQuestion(h.question); runAgents(h.question); }} disabled={analysisStatus === "loading" || minute === 0}>
+                    <b>{h.question}</b><small>Asked at {h.label} · ask again at {labelOf(minute)}</small>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="clear-history" onClick={() => { setHistory([]); saveHistory([]); }}>Clear history</button>
+          </details>
         )}
       </section>
 
@@ -579,20 +747,20 @@ export default function Home() {
                     {(i === 0 || i === moment.path.length - 1) && <i>{p.player}</i>}
                   </span>
                 ))}
-                <div className="field-label">{moment.clock} · {moment.title.toUpperCase()}</div>
+                <div className="field-label">{moment.label} · {moment.title.toUpperCase()}</div>
               </div>
               <ol className="moment-list">
                 {moments.map((m) => (
                   <li key={m.id} className={`${m.id === moment.id ? "active" : ""} ${m.kind}`}>
                     <button className="moment-pick" onClick={() => setMomentId(m.id)}>
-                      <span className="moment-min">{m.minute}&apos;</span>
+                      <span className="moment-min">{m.label}</span>
                       <span className={`event-indicator ${m.team}`} />
                       <span className="moment-text">
                         <b>{m.kind === "goal" ? "Goal · " : ""}{m.title}</b>
                         <small>{m.story}{mode !== "simple" ? ` · ${m.xg.toFixed(2)} xG` : ""}</small>
                       </span>
                     </button>
-                    <button className="ask-about" onClick={() => askAbout(m.question)} disabled={analysisStatus === "loading"} aria-label={`Ask the agents about ${m.title} at ${m.minute}'`}>Ask the agents →</button>
+                    <button className="ask-about" onClick={() => askAbout(m.question)} disabled={analysisStatus === "loading"} aria-label={`Ask the agents about ${m.title} at ${m.label}`}>Ask the agents →</button>
                   </li>
                 ))}
               </ol>
@@ -625,9 +793,9 @@ export default function Home() {
       <section className="surface stats-panel">
         <div className="panel-head">
           <h2><span className="section-numeral">04</span>Match by the numbers</h2>
-          <span className="panel-meta">Cumulative · through {minute}&apos;</span>
+          <span className="panel-meta">Cumulative · through {labelOf(minute)}</span>
         </div>
-        <div className="stat-heading"><span>{home?.abbr ?? "NBR"}</span><span>METRIC</span><span>{away?.abbr ?? "RSU"}</span></div>
+        <div className="stat-heading"><span>{home?.abbr ?? ""}</span><span>METRIC</span><span>{away?.abbr ?? ""}</span></div>
         {rows.map((r) => {
           const h = r.h ?? 0, a = r.a ?? 0, total = h + a;
           const share = total > 0 ? (h / total) * 100 : 50;
@@ -646,7 +814,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>MATCHMIND / v0.3</span>
+        <span>MATCHMIND / v0.4</span>
         <span>ALL CLUBS, PLAYERS, EVENTS AND xG ARE FICTIONAL · NO ACTUAL LEAGUE FOOTAGE</span>
         <button className="about-link" onClick={() => aboutRef.current?.showModal()}>How MatchMind works →</button>
       </footer>
@@ -678,14 +846,18 @@ export default function Home() {
           <p>
             Ratings out of 10 that ask who drove the moments that mattered and who caused the bad ones. Every move ending in a shot
             shares its value between the shooter, the player who set it up and the rest of the move; every chance the opponent gets
-            straight after a player loses the ball counts against that player. That&apos;s how a defender can outrate a goalscorer.
+            straight after a player loses the ball counts against that player. Saves and blocks earn the value of the chance
+            they stopped, and winning the ball near your own goal is worth the danger it took away. That&apos;s how a defender or a
+            goalkeeper can outrate a goalscorer.
           </p>
 
-          <h3>The match</h3>
+          <h3>The matches</h3>
           <p>
-            Northbridge City and Riverside United are fictional. The match is simulated pass by pass (about 1,500 events) and
-            calibrated against real Premier League averages from StatsBomb Open Data: shots, xG, passing, pressing, tackles and
-            possession all land close to a real game. No real Premier League data or footage is used.
+            Three fictional matches, each simulated pass by pass (about 1,900 events): a 2-1 decided by a pressing spell, a
+            2-3 comeback and a goalless game won by the keepers. Like real football they have set pieces, cards, substitutions,
+            injuries and VAR checks; the stoppages become added time (45+2&apos;, 90+5&apos;) and break the momentum of the team on
+            top, as they do in real matches. Every rate is calibrated against recent men&apos;s football in StatsBomb Open Data
+            (2023/24 Bundesliga and Euro 2024). No real Premier League data or footage is used.
           </p>
 
           <h3>Built with</h3>
