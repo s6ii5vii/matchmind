@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
+from ..synthetic import span
+
 METRIC_LABELS = {
     "goals": "goals", "shots": "shots", "xg": "synthetic xG",
     "passes": "passes", "completed_passes": "completed passes", "pass_accuracy": "pass accuracy",
@@ -75,6 +77,7 @@ class Job:
     mode: str
     focus: str
     question: str = ""
+    match: str = ""
     engine: str = "offline"
     window: tuple[int, int] = (0, 0)
     priorities: list[str] = field(default_factory=list)
@@ -107,4 +110,5 @@ class Job:
             self.listener = listener
         data.pop("listener")
         data["window"] = list(self.window)
+        data["window_label"] = span(*self.window) if self.window[0] else ""
         return data

@@ -5,7 +5,7 @@ chance straight after a player loses the ball is that player's bad moment.
 """
 
 from .players import LOST, WINS, other
-from .synthetic import EVENTS, TEAMS
+from .synthetic import EVENTS, TEAMS, tidy
 
 BIG_CHANCE_XG = 0.07
 
@@ -39,8 +39,11 @@ def key_moments(minute: int = 90) -> list[dict]:
         creator = next((p for p in reversed(passes) if p["receiver"] == shot["player"]), None)
 
         goal = shot["is_goal"]
-        outcome = "scores" if goal else {"saved": "is denied by the keeper", "off_target": "shoots wide",
-                                         "blocked": "has the shot blocked"}[shot["outcome"]]
+        stop = next((e for e in move if e["type"] in ("save", "block") and e["t"] >= shot["t"]), None)
+        outcome = "scores" if goal else {
+            "saved": f"is denied by {stop['player'] if stop else 'the keeper'}", "off_target": "shoots wide",
+            "blocked": f"has the shot blocked by {stop['player']}" if stop else "has the shot blocked",
+        }[shot["outcome"]]
         title = f"{shot['player']} {outcome}"
         story = [f"{n_passes(len(passes))} move" + (f", set up by {creator['player']}" if creator else "")]
         if culprit:
@@ -54,12 +57,13 @@ def key_moments(minute: int = 90) -> list[dict]:
         path.append({"x": shot["x"], "y": shot["y"], "player": shot["player"], "kind": "goal" if goal else "shot"})
 
         moments.append({
-            "id": shot["id"], "minute": shot["minute"], "clock": shot["clock"], "team": team,
+            "id": shot["id"], "minute": shot["minute"], "label": shot["label"], "clock": shot["clock"], "team": team,
             "kind": "goal" if goal else "chance", "title": title, "story": " → ".join(story),
             "xg": shot["xg"], "shooter": shot["player"], "creator": creator["player"] if creator else None,
             "won_by": won_by["player"] if won_by else None, "lost_by": culprit["player"] if culprit else None,
             "lost_by_team": other(team) if culprit else None, "path": path,
-            "question": f"What led to {_name(team)}'s {'goal' if goal else 'chance'} at {shot['minute']}?",
+            "stopped_by": stop["player"] if stop else None,
+            "question": tidy(f"What led to {_name(team)}'s {'goal' if goal else 'chance'} at {shot['label']}?"),
             "event_ids": [e["id"] for e in move if e["t"] <= shot["t"]], "passes": len(passes),
         })
     return list(reversed(moments))

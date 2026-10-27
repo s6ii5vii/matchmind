@@ -5,16 +5,25 @@ the assumption inside the viewer's question); the Skeptic checks each against th
 send busted takes back to the Pundit for one revision round.
 """
 
+import asyncio
+import os
+
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from typing_extensions import Never
 
-from ..synthetic import TEAMS
+from ..synthetic import DEFAULT_MATCH, TEAMS, span, use_match
 from . import llm, offline
 from .models import Job, Relay
 from .tools import verify_claim, window_events, window_stats
 
 MAX_REVISIONS = 1
 MIN_WINDOW_EVENTS = 4
+# a slow model must not leave a viewer waiting: past this, the agents fall back to rules
+MODEL_TIMEOUT = float(os.environ.get("MATCHMIND_MODEL_TIMEOUT", "25"))
+
+
+def failure(exc: Exception) -> str:
+    return "Model took too long" if isinstance(exc, TimeoutError) else type(exc).__name__
 
 
 class Orchestrator(Executor):
@@ -24,7 +33,7 @@ class Orchestrator(Executor):
         offline.plan(job)
         start, end = job.window
         focus = TEAMS[job.focus]["name"]
-        detail = f"Following {focus}, minutes {start}-{end}"
+        detail = f"Following {focus}, {span(start, end)}"
         if job.priorities:
             detail += f", prioritising {', '.join(job.priorities)}"
         job.log("Orchestrator", "Planned the investigation", detail + ".")
@@ -52,9 +61,13 @@ class Pundit(Executor):
 
     async def _takes(self, job: Job, rejected) -> list:
         if job.needs_revision:
-            return (await llm.propose(self.client, job, rejected)) if self.client else offline.revise(rejected)
+            if self.client:
+                return await asyncio.wait_for(llm.propose(self.client, job, rejected), MODEL_TIMEOUT)
+            return offline.revise(rejected)
         covered = tuple(c.metric for c in job.claims if c.premise)  # the question's own topic is already checked
-        return (await llm.propose(self.client, job)) if self.client else offline.propose(job, limit=3, skip=covered)
+        if self.client:
+            return await asyncio.wait_for(llm.propose(self.client, job), MODEL_TIMEOUT)
+        return offline.propose(job, limit=3, skip=covered)
 
     @handler
     async def run(self, job: Job, ctx: WorkflowContext[Job]) -> None:
@@ -71,7 +84,7 @@ class Pundit(Executor):
         try:
             new = await self._takes(job, rejected)
         except Exception as exc:  # model outage must not take the dashboard down
-            job.log("Pundit", "Model call failed, using rule-based takes", type(exc).__name__, "warn")
+            job.log("Pundit", "Model call failed, using rule-based takes", failure(exc), "warn")
             job.engine = "offline"
             self.client = None
             new = await self._takes(job, rejected)
@@ -122,7 +135,7 @@ class Narrator(Executor):
         job.narrative, job.narrative_source = offline.narrate(job), "template"
         if self.client and any(c.finding for c in checked):
             try:
-                text = await llm.narrate(self.client, job, checked)
+                text = await asyncio.wait_for(llm.narrate(self.client, job, checked), MODEL_TIMEOUT)
                 bad = llm.ungrounded_numbers(text, job, checked)
                 if bad:
                     job.log("Narrator", "Grounding guard blocked the model's draft",
@@ -131,7 +144,7 @@ class Narrator(Executor):
                     job.narrative = f"{job.moment} {text}" if job.moment else text
                     job.narrative_source = "model"
             except Exception as exc:
-                job.log("Narrator", "Model call failed, using the template", type(exc).__name__, "warn")
+                job.log("Narrator", "Model call failed, using the template", failure(exc), "warn")
         held = sum(c.verdict in ("verified", "corrected") for c in checked)
         job.log("Narrator", f"Wrote the {job.mode} explanation",
                 f"{held} of {len(checked)} take(s) held up ({job.narrative_source}).", "ok")
@@ -153,12 +166,13 @@ def build_workflow(client=None):
 
 
 async def run_analysis(minute: int, mode: str = "fan", focus: str = "home", question: str = "",
-                       client=None, provider: str = "offline", listener=None) -> dict:
-    job = Job(minute=minute, mode=mode, focus=focus, question=question.strip()[:300],
-              engine=provider if client else "offline", listener=Relay(listener) if listener else None)
-    if minute < 1:
-        job.log("Orchestrator", "Waiting for kick-off", "No events have happened yet.", "warn")
-        job.narrative, job.narrative_source = "The match hasn't started yet.", "template"
-        return job.to_dict()
-    result = await build_workflow(client).run(job)
-    return result.get_outputs()[-1].to_dict()
+                       client=None, provider: str = "offline", listener=None, match: str = DEFAULT_MATCH) -> dict:
+    with use_match(match):  # every agent (and every task the workflow starts) works on this match
+        job = Job(minute=minute, mode=mode, focus=focus, question=question.strip()[:300], match=match,
+                  engine=provider if client else "offline", listener=Relay(listener) if listener else None)
+        if minute < 1:
+            job.log("Orchestrator", "Waiting for kick-off", "No events have happened yet.", "warn")
+            job.narrative, job.narrative_source = "The match hasn't started yet.", "template"
+            return job.to_dict()
+        result = await build_workflow(client).run(job)
+        return result.get_outputs()[-1].to_dict()

@@ -7,8 +7,11 @@ Most ratings add up a player's actions. This one starts from the match's moments
   passed in the move, and whoever won the ball back to start it. That shows who orchestrates.
 - Every chance the opponent creates straight after a player loses the ball is charged to that
   player. That shows who causes the bad moments.
-- Everyday actions still count, for less: passes that move the ball towards goal, winning the ball
-  back (worth more near your own goal), pressing that forces an error, losing the ball, fouls.
+- Everyday actions still count, for less: passes and carries that move the ball towards goal, beating
+  a defender, winning the ball back (worth more near your own goal), pressing that forces an error,
+  clearances, losing the ball, fouls and bookings.
+- Stopping a chance is worth what the chance was worth: a keeper's save or a defender's block earns
+  a share of the shot's value, so goalkeepers and centre-backs are rated on the goals they prevent.
 
 Each action is worth between -10 and +10 impact points (10 points = one goal's worth). The total
 becomes a rating out of 10 that starts at 6.0 and moves with the match, like familiar ratings.
@@ -17,12 +20,12 @@ It's transparent and rule-based, not a trained model.
 
 import math
 
-from .synthetic import EVENTS, SQUADS, TEAMS
+from .synthetic import EVENTS, SQUADS, TEAMS, current_match, tidy
 
 CATEGORIES = ("chances", "build_up", "defending", "ball_security", "costly")
 CATEGORY_LABELS = {
     "chances": "Driving the team's chances", "build_up": "Moving the ball forward",
-    "defending": "Winning the ball back", "ball_security": "Looking after the ball",
+    "defending": "Winning the ball and stopping chances", "ball_security": "Looking after the ball",
     "costly": "Mistakes that led to chances",
 }
 LOST = {"intercepted", "pass misplaced", "pass out of play", "dispossessed", "tackled", "miscontrol"}
@@ -31,6 +34,7 @@ WINS = {"interception", "tackle", "recovery"}
 DANGER = {"defensive": 2.0, "middle": 1.3, "attacking": 1.0}
 SHARES = {"shooter": 0.50, "creator": 0.25, "others": 0.25}
 BLAME = 0.6  # a defence can still stop a chance after a loose pass, so the passer carries most, not all
+SAVE_SHARE, BLOCK_SHARE = 0.8, 0.5  # a save or block is credited with most (not all) of the chance it stopped
 RATING_BASE, RATING_SCALE = 6.0, 0.12
 
 
@@ -45,6 +49,11 @@ def threat(depth: float) -> float:
 
 def depth(team: str, x: float) -> float:
     return x if team == "home" else 100 - x
+
+
+def denied(e: dict) -> float:
+    """The threat the opponent had where this player took the ball off them."""
+    return threat(100 - depth(e["team"], e["x"]))
 
 
 def cap(points: float) -> float:
@@ -62,7 +71,9 @@ def _blank(team: str, number: int, position: str, name: str) -> dict:
         "counts": {"goals": 0, "assists": 0, "shots": 0, "xg": 0.0, "chances_involved": 0, "goals_involved": 0,
                    "team_chances": 0, "chances_after_loss": 0, "goals_after_loss": 0, "progressive_passes": 0,
                    "ball_wins": 0, "wins_near_own_goal": 0, "forced_errors": 0, "times_lost_ball": 0,
-                   "fouls": 0},
+                   "fouls": 0, "saves": 0, "claims": 0, "blocks": 0, "clearances": 0, "carries_forward": 0,
+                   "dribbles": 0, "yellow_cards": 0},
+        "subbed_on": None, "subbed_off": None,
         "moments": [],  # (points, event id, description)
     }
 
@@ -70,8 +81,14 @@ def _blank(team: str, number: int, position: str, name: str) -> dict:
 def player_impact(minute: int = 90) -> dict[str, dict]:
     """Every player's impact using only events up to this minute."""
     events = [e for e in EVENTS if e["minute"] <= minute]
+    bench = current_match().bench
     players = {name: _blank(side, number, position, name)
-               for side, squad in SQUADS.items() for number, position, name in squad}
+               for side in SQUADS for number, position, name in [*SQUADS[side], *bench[side]]}
+    starters = {name for squad in SQUADS.values() for _, _, name in squad}
+    for e in events:
+        if e["type"] == "substitution":
+            players[e["player"]]["subbed_off"] = e["label"]
+            players[e["receiver"]]["subbed_on"] = e["label"]
 
     def credit(name: str, category: str, points: float, e: dict, what: str) -> None:
         points = cap(points)
@@ -152,12 +169,37 @@ def player_impact(minute: int = 90) -> dict[str, dict]:
             if gain > 0.04:
                 c["progressive_passes"] += 1
                 credit(e["player"], "build_up", gain, e, "moved the ball forward")
+        elif e["type"] == "carry":
+            gain = threat(depth(e["team"], e["end_x"])) - threat(depth(e["team"], e["x"]))
+            if gain > 0.04:
+                c["carries_forward"] += 1
+                credit(e["player"], "build_up", 0.6 * gain, e, "carried the ball forward")
+        elif e["type"] == "dribble" and e["outcome"] == "complete":
+            c["dribbles"] += 1
+            credit(e["player"], "build_up", 0.3, e, "beat a defender")
+        elif e["type"] == "save":
+            c["saves"] += 1
+            credit(e["player"], "defending", SAVE_SHARE * 10 * e["xg"], e, "made a save")
+        elif e["type"] == "block":
+            c["blocks"] += 1
+            credit(e["player"], "defending", BLOCK_SHARE * 10 * e["xg"], e, "blocked a shot")
+        elif e["type"] == "claim":
+            c["claims"] += 1
+            credit(e["player"], "defending", 0.3, e, "claimed a cross")
+        elif e["type"] == "clearance":
+            c["clearances"] += 1
+            credit(e["player"], "defending", 0.08 * danger + 0.5 * denied(e), e, "cleared the danger")
+        elif e["type"] == "card":
+            c["yellow_cards"] += 1
+            credit(e["player"], "ball_security", -0.5, e, "was booked")
         elif e["type"] in WINS and e["outcome"] == "won":
             c["ball_wins"] += 1
             c["wins_near_own_goal"] += e["zone"] == "defensive"
             base = 0.08 if e["type"] == "recovery" else 0.3
             what = "stopped an attack near goal" if e["zone"] == "defensive" else "won the ball back"
-            credit(e["player"], "defending", base * danger, e, what)
+            # the mirror of moving the ball forward: taking it off an opponent near your goal removes their threat
+            credit(e["player"], "defending", base * danger + (0.5 if e["type"] == "recovery" else 1) * denied(e),
+                   e, what)
         elif e["type"] == "pressure":
             forced = next((n for n in events[i + 1:i + 4] if n["t"] - e["t"] <= 6
                            and n["possession_team"] != e["team"] and n["possession_end"] in LOST), None)
@@ -171,6 +213,8 @@ def player_impact(minute: int = 90) -> dict[str, dict]:
             c["times_lost_ball"] += 1
             credit(e["player"], "ball_security", -0.25 * danger, e, "lost the ball")
 
+    # a substitute who hasn't come on yet hasn't played
+    players = {name: p for name, p in players.items() if name in starters or p["subbed_on"]}
     for p in players.values():
         p["counts"]["xg"] = round(p["counts"]["xg"], 2)
         p["values"] = {k: round(v, 1) for k, v in p["values"].items()}
@@ -193,7 +237,7 @@ def _tag(players: dict[str, dict]) -> None:
             orchestrator["tag"] = "Orchestrator"
         wall = max(squad, key=lambda p: p["values"]["defending"])
         if wall["values"]["defending"] >= 3 and not wall["tag"]:
-            wall["tag"] = "Ball winner"
+            wall["tag"] = "Shot stopper" if wall["position"] == "GK" else "Ball winner"
         for p in squad:
             if p["values"]["costly"] <= -4 and not p["tag"]:
                 p["tag"] = "Costly mistakes"
@@ -221,10 +265,14 @@ def summary(p: dict, simple: bool = False) -> str:
         near = c["wins_near_own_goal"]
         parts.append(f"won the ball back {n(c['ball_wins'], 'time')}"
                      + (f", {near} near their own goal" if near and not simple else ""))
+    if c["saves"]:
+        parts.append(f"made {n(c['saves'], 'save')}")
+    if c["blocks"]:
+        parts.append(f"blocked {n(c['blocks'], 'shot')}")
     if c["chances_after_loss"]:
         parts.append(f"lost the ball before {n(c['chances_after_loss'], 'chance')} for {opp}"
                      + (f", including {n(c['goals_after_loss'], 'goal')}" if c["goals_after_loss"] else ""))
-    return ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts \
+    return tidy(", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]) if parts \
         else "hasn't had much of the ball yet"
 
 

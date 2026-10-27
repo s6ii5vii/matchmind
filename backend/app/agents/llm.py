@@ -11,10 +11,10 @@ import re
 
 from agent_framework import Agent
 
-from ..synthetic import TEAMS
+from ..synthetic import EVENTS_BY_ID, TEAMS, label, match_meta, span, tidy
 from .models import METRIC_LABELS, Claim, Job
 from .offline import PHRASES
-from .tools import EVENTS_BY_ID, window_events
+from .tools import window_events
 
 API_VERSION = "2025-04-01-preview"  # GPT-5 family needs 2025-04-01-preview or later
 NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
@@ -98,10 +98,13 @@ def make_pundit_tools(minute: int):
     return [recent_moves, recent_events]
 
 
-PUNDIT_INSTRUCTIONS = f"""You are the Pundit agent in MatchMind, a TV pundit watching a fictional football match
+def pundit_instructions() -> str:
+    """Built per request: the teams depend on which match is being analysed."""
+    return f"""You are the Pundit agent in MatchMind, a TV pundit watching a fictional football match
 (home = {TEAMS['home']['name']}, away = {TEAMS['away']['name']}). You only see what a viewer sees: the score
 and the last few minutes of play (use recent_moves for the passing moves, recent_events for detail). You do NOT
-have the stats. Read the game honestly and
+have the stats. Time is counted in minutes of play from kick-off (1 to {match_meta()['length']}, added time
+included; the second half starts at minute {match_meta()['first_half'] + 1}). Read the game honestly and
 give up to 3 confident, punchy takes, the way a good pundit would say them on air. You'll usually be right, but
 you only saw the last few minutes and you're talking about the whole spell, so don't hedge: commit to your read.
 You don't know the stats, so never put numbers in the take's text; put your guess in "value" instead.
@@ -132,17 +135,18 @@ def _take_text(raw: dict) -> str:
     text = str(raw["text"])[:200]
     phrase = PHRASES.get((str(raw["metric"]), str(raw["relation"])))
     if re.search(r"\d", text) and phrase and raw["team"] in TEAMS:
-        return phrase.format(T=TEAMS[raw["team"]]["name"])
+        return tidy(phrase.format(T=TEAMS[raw["team"]]["name"]))
     return text
 
 
 async def propose(client, job: Job, rejected: list[Claim] | None = None) -> list[Claim]:
-    agent = Agent(client=client, name="Pundit", instructions=PUNDIT_INSTRUCTIONS, tools=make_pundit_tools(job.minute))
+    agent = Agent(client=client, name="Pundit", instructions=pundit_instructions(), tools=make_pundit_tools(job.minute))
     start, end = job.window
     score = {side: sum(1 for e in window_events(1, job.minute) if e["team"] == side and e["is_goal"]) for side in TEAMS}
-    prompt = (f"Minute {job.minute}. Score: {TEAMS['home']['name']} {score['home']}-{score['away']} "
-              f"{TEAMS['away']['name']}. Talk about minutes {start}-{end}, following {TEAMS[job.focus]['name']} "
-              f"({job.focus}). Viewer question: {job.question or 'none'}.")
+    prompt = (f"Minute of play {job.minute} (the clock shows {label(job.minute)}). Score: {TEAMS['home']['name']} "
+              f"{score['home']}-{score['away']} {TEAMS['away']['name']}. Talk about minutes of play {start}-{end} "
+              f"({span(start, end)}), following {TEAMS[job.focus]['name']} ({job.focus}). "
+              f"Viewer question: {job.question or 'none'}.")
     covered = [c.metric for c in job.claims if c.premise]
     if covered:
         prompt += f" The question's own assumption ({covered[0]}) is already being checked; talk about something else."
@@ -172,16 +176,20 @@ async def narrate(client, job: Job, checked: list[Claim]) -> str:
     takes = [{"from": "viewer's question" if c.premise else "pundit", "take": c.text, "verdict": c.verdict,
               "data": c.finding or c.reason, "in_plain_words": c.plain_finding} for c in checked]
     response = await agent.run(
-        f"Reader: {job.mode}. Following {TEAMS[job.focus]['name']}. Question: {job.question or 'none'}. "
-        f"Checked takes: {json.dumps(takes)}")
+        f"Reader: {job.mode}. Following {TEAMS[job.focus]['name']}. The match is at {label(job.minute)}; the spell "
+        f"is {span(*job.window)}. Question: {job.question or 'none'}. Checked takes: {json.dumps(takes)}")
     return response.text.strip()
 
 
 def ungrounded_numbers(text: str, job: Job, checked: list[Claim]) -> list[str]:
     """Grounding guard: every number in the narration must come from the Skeptic's data or the clock."""
-    allowed = {float(job.minute), *map(float, job.window)}
+    minutes = {job.minute, *job.window}
     for c in checked:
-        allowed |= {float(c.start), float(c.end), float(c.start - (c.end - c.start + 1)), float(c.start - 1)}
+        minutes |= {c.start, c.end, c.start - (c.end - c.start + 1), c.start - 1}
+    allowed = {float(m) for m in minutes}
+    for m in minutes:  # the clock as football writes it: 72', 45+2', 90+4'
+        allowed |= {float(n) for n in re.findall(r"\d+", label(m))}
+    for c in checked:
         for v in (c.actual_value, c.compare_value):
             if v is not None:
                 allowed |= {round(float(v), 2), float(round(v))}
